@@ -1,7 +1,6 @@
 from jax.config import config
 config.update("jax_enable_x64", True)
 import jax, jax.numpy as jnp, jax.random as jr
-from keypoint_moseq.util import inv_psd
 
 
 def _predict(m, S, A, B, Q):
@@ -19,9 +18,9 @@ def _condition_on_diag(m, S, C, D, Rdiag, y):
     """
     Condition a Gaussian potential on a new linear Gaussian observation.
     Assume R is diagonal.
-    """
-    Sinv = inv_psd(S)
-    K = ((jnp.diag(1/Rdiag)-C@inv_psd(Sinv+(C.T/Rdiag)@C)@C.T/Rdiag/Rdiag[:,None])@C@S).T
+    """    
+    Sinv = jnp.linalg.inv(S)
+    K = ((jnp.diag(1/Rdiag)-C@jnp.linalg.inv(Sinv+(C.T/Rdiag)@C)@C.T/Rdiag/Rdiag[:,None])@C@S).T
     Sigma_cond = S - K @ C @ S
     mu_cond = Sigma_cond @ (Sinv@m + C.T @ ((y - D)/Rdiag))
     return mu_cond, Sigma_cond
@@ -52,6 +51,7 @@ def kalman_filter(ys, mask, m0, S0, As, Bs, Qs, C, D, Rs):
         A, B, Q, R, y = args
         mu_cond, Sigma_cond = _condition_on_diag(mu_pred, Sigma_pred, C, D, R, y)
         mu_pred, Sigma_pred = _predict(mu_cond, Sigma_cond, A, B, Q)
+        Sigma_pred = Sigma_pred + jnp.eye(Sigma_pred.shape[0])*1e-4
         return (mu_pred, Sigma_pred), (mu_cond, Sigma_cond)
     
     def _masked_step(carry, args):

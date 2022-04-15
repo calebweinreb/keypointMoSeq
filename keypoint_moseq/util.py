@@ -134,15 +134,6 @@ def pad_affine(x):
     xpadded = jnp.concatenate((x,padding),axis=-1)
     return xpadded
 
-
-def inv_psd(A):
-    """
-    Invert a positive semi-definite matrix
-    """
-    L = jnp.linalg.cholesky(A)
-    Linv = jax.scipy.linalg.solve_triangular(L, jnp.identity(A.shape[-1]), lower=True)
-    return Linv.T.dot(Linv)
-
 @njit
 def count_transitions(num_states, mask, stateseqs):
     """

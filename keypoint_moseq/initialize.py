@@ -24,9 +24,6 @@ def initial_ar_params(key, *, num_states, nu_0, S_0, M_0, K_0, **kwargs):
         jr.split(key, num_states),nu_0,S_0,M_0,K_0)
     return Ab,Q
 
-def initial_variance(*, Y, **kwargs):
-    return jnp.ones(Y.shape[-2])*1e-3
-    
 def initial_transitions(key, *, num_states, alpha, kappa, gamma):
     keys = jr.split(key)
     counts = jnp.zeros((num_states,num_states))
