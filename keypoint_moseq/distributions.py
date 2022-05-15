@@ -1,5 +1,4 @@
 from jax.config import config
-config.update("jax_enable_x64", True)
 import jax, jax.numpy as jnp, jax.random as jr
 import tensorflow_probability.substrates.jax.distributions as tfd
 

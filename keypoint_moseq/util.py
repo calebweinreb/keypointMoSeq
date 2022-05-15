@@ -1,11 +1,68 @@
 from numba import njit, prange
 import numpy as np
 from jax.config import config
-config.update("jax_enable_x64", True)
-import jax, jax.numpy as jnp
+config.update('jax_enable_x64', True)
+import jax, jax.numpy as jnp, jax.random as jr
 import tensorflow_probability.substrates.jax.distributions as tfd
 from itertools import groupby
 from functools import partial
+na = jnp.newaxis
+
+def masked_mean(X, m, axis=0):
+    return (X*m).sum(axis) / (m.sum(axis)+1e-10)
+
+def ppca(key, data, missing, num_components, num_iters=50):
+    batch_shape = data.shape[:-1]
+    data = data.reshape(-1, data.shape[-1])
+    missing = missing.reshape(-1, data.shape[-1])
+    N,D = data.shape
+    
+    observed = ~missing
+    total_missing = missing.sum()
+    means = masked_mean(data, observed)
+    stds = jnp.sqrt(masked_mean((data-means)**2, observed))
+    data = (data - means) / stds
+
+    # initial
+    C = jr.normal(key, (D, num_components))
+    X = data @ C @ jnp.linalg.inv(C.T@C)
+    recon = jnp.where(observed, X @ C.T, 0)
+    ss = ((recon - data)**2).sum() / (N*D-total_missing)
+
+    for itr in range(num_iters):
+        
+        # e-step
+        data = jnp.where(observed, data, X@C.T)
+        Sx = jnp.linalg.inv(jnp.eye(num_components) + C.T@C/ss)
+        X = data @ C @ Sx / ss
+
+        # m-step
+        C = data.T @ X @ jnp.linalg.pinv(X.T@X + N*Sx)
+        recon = jnp.where(observed, X@C.T, 0)
+        ss = (((recon-data)**2).sum() + N*(C.T@C*Sx).sum() + total_missing*ss)/(N*D)
+    
+    U = jnp.linalg.svd(C)[0]
+    C = U[:,:num_components]
+    vals, vecs = jnp.linalg.eigh(jnp.cov((data @ C).T))
+    order = jnp.flipud(jnp.argsort(vals))
+    vecs = vecs[:, order]
+    vals = vals[order]
+    C = C @ vecs
+    latents = (data*stds)@C
+    return C, means, latents.reshape(*batch_shape, num_components)
+
+
+@jax.jit
+def obs_log_prob(*, Y, mask, x, s, v, h, Cd, sigmasq, **kwargs):
+    k,d = Y.shape[-2:]
+    Gamma = center_embedding(k)
+    Ybar = Gamma @ (pad_affine(x)@Cd.T).reshape(*Y.shape[:-2],k-1,d)
+    sqerr = ((Y - affine_transform(Ybar,v,h))**2).sum(-1)
+    return -1/2 * sqerr/s/sigmasq - 3/2 * jnp.log(s*sigmasq*jnp.pi)
+
+
+def center_embedding(k):
+    return jnp.linalg.svd(jnp.eye(k) - jnp.ones((k,k))/k)[0][:,:-1]
 
 def stateseq_stats(stateseqs, mask):
     s = np.array(stateseqs.flatten()[mask[...,-stateseqs.shape[-1]:].flatten()>0])
@@ -13,14 +70,24 @@ def stateseq_stats(stateseqs, mask):
     usage = np.bincount(s)
     return usage, durations
 
-def merge_data(data_dict, keys=None):
+def merge_data(data_dict, keys=None, batch_length=None):
     if keys is None: keys = sorted(data_dict.keys())
     max_length = np.max([data_dict[k].shape[0] for k in keys])
-    pad = lambda x: np.concatenate([x, np.zeros((max_length-x.shape[0],*x.shape[1:]))],axis=0)
-    data = np.stack([pad(data_dict[k]) for k in keys],axis=0)
-    mask = np.stack([pad(np.ones(data_dict[k].shape[0])) for k in keys],axis=0)
+    if batch_length is None: batch_length = max_length
+    else: max_length = int(np.ceil(max_length/batch_length)*batch_length)
+      
+    def reshape(x):
+        x = np.concatenate([x, np.zeros((max_length-x.shape[0],*x.shape[1:]))],axis=0)
+        return x.reshape(-1, batch_length, *x.shape[1:])
+    
+    data = np.concatenate([reshape(data_dict[k]) for k in keys],axis=0)
+    mask = np.concatenate([reshape(np.ones(data_dict[k].shape[0])) for k in keys],axis=0)
+    keys = [(k,i) for k in keys for i in range(int(len(data_dict[k])/batch_length+1))]
     return data, mask, keys
 
+def ensure_symmetric(X):
+    XT = jnp.swapaxes(X,-1,-2)
+    return (X+XT)/2
 
 def vector_to_angle(V):
     """Convert 2D vectors to angles in [-pi, pi]. The vector (1,0)
@@ -93,7 +160,7 @@ def affine_transform(Y, v, h):
         
     """
     rot_matrix = angle_to_rotation_matrix(h, keypoint_dim=Y.shape[-1])
-    Ytransformed = (Y[...,None,:]*rot_matrix[...,None,:,:]).sum(-1) + v[...,None,:]
+    Ytransformed = (Y[...,na,:]*rot_matrix[...,na,:,:]).sum(-1) + v[...,na,:]
     return Ytransformed
 
 @jax.jit
@@ -121,7 +188,7 @@ def inverse_affine_transform(Y, v, h):
         
     """
     rot_matrix = angle_to_rotation_matrix(-h, keypoint_dim=Y.shape[-1])
-    Ytransformed = ((Y-v[...,None,:])[...,None,:]*rot_matrix[...,None,:,:]).sum(-1)
+    Ytransformed = ((Y-v[...,na,:])[...,na,:]*rot_matrix[...,na,:,:]).sum(-1)
     return Ytransformed
     
 
@@ -148,9 +215,9 @@ def count_transitions(num_states, mask, stateseqs):
     return counts
 
 
-def add_lags(x, nlags):
+def get_lags(x, nlags):
     """
-    Append lags to multivariate time series.
+    Get lags of a multivariate time series.
     
     Parameters
     ----------  
@@ -162,7 +229,7 @@ def add_lags(x, nlags):
     
     Returns
     -------
-    xlagged: ndarray, shape (*dims, t-nlags, d*nlags)
+    xlagged: ndarray, shape [*dims, t-nlags, d*nlags]
         Array formed by concatenating lags of x along the last dim.
         The last row of `xlagged` is `x[...,-nlags,:],...,x[...,-2,:]`
     """
@@ -189,17 +256,3 @@ def ar_to_lds(As, bs, Qs, Cs):
     return A_, b_, Q_, C_
 
 
-def apply_pca(X, mask, n_components, max_samples=100000):
-    initial_shape = X.shape[:-1]
-    X = np.array(X.reshape(-1,X.shape[-1]))
-    X_use = X[np.array(mask.flatten())>0]
-    if X_use.shape[0] > max_samples:
-        ix = np.random.permutation(X_use.shape[0])
-        X_use = X_use[ix[:max_samples]]
-
-    from sklearn.decomposition import PCA
-    pca = PCA(n_components=n_components).fit(X_use)
-    X_transformed = jnp.array(pca.transform(X).reshape(*initial_shape,-1))
-    components = jnp.array(pca.components_)
-    mean = jnp.array(pca.mean_)
-    return X_transformed, components, mean
