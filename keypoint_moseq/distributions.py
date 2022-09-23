@@ -18,7 +18,7 @@ def sample_chi2(key, degs):
     return jr.gamma(key, degs/2)*2
 
 def sample_discrete(key, distn,dtype=jnp.int32):
-    return jr.categorical(key, jnp.log(distn+1e-16))
+    return jr.categorical(key, jnp.log(distn))
 
 def sample_mn(key, M, U, V):
     G = jr.normal(key,M.shape)
@@ -72,10 +72,10 @@ def sample_hmm_stateseq(key, log_likelihoods, mask, pi):
         return jax.lax.cond(mask_t>0, _sample, lambda args: (args[:-1],0), (key, next_potential, alphan_t))
         
     init_distn = jnp.ones(pi.shape[0])/pi.shape[0]
-    alphan = jax.lax.scan(_forward_message,  (init_distn,0.), (log_likelihoods, mask))[1]
+    (_,log_likelihood), alphan = jax.lax.scan(_forward_message,  (init_distn,0.), (log_likelihoods, mask))
     
     init_potential = jnp.ones(pi.shape[0])
     _,stateseq = jax.lax.scan(_backward_message, (key,init_potential), (alphan,mask), reverse=True)
-    return stateseq
+    return stateseq, log_likelihood
 
 

@@ -8,10 +8,36 @@ from itertools import groupby
 from functools import partial
 na = jnp.newaxis
 
-def masked_mean(X, m, axis=0):
-    return (X*m).sum(axis) / (m.sum(axis)+1e-10)
+def expected_keypoints(*, Y, v, h, x, Cd, **kwargs):
+    k,d = Y.shape[-2:]
+    Gamma = center_embedding(k)
+    Ybar = Gamma @ (pad_affine(x)@Cd.T).reshape(*Y.shape[:-2],k-1,d)
+    Yexp = affine_transform(Ybar,v,h)
+    return Yexp
 
-def ppca(key, data, missing, num_components, num_iters=50):
+
+def pca_transform(components, means, *, Y, v, h, **kwargs):
+    y = inverse_affine_transform(Y,v,h).reshape(*Y.shape[:-2],-1)
+    return (y-means) @ components
+
+def interpolate_keypoints(keypoints, outliers, axis=1):
+    keypoints = np.moveaxis(keypoints, axis, 0)
+    outliers = np.moveaxis(outliers, axis, 0)
+    init_shape = keypoints.shape
+    outliers = np.repeat(outliers[...,None],init_shape[-1],axis=-1)
+    keypoints = keypoints.reshape(init_shape[0],-1)
+    outliers = outliers.reshape(init_shape[0],-1)
+    for i in range(keypoints.shape[1]):
+        keypoints[:,i] = np.interp(
+            np.arange(init_shape[0]), 
+            np.nonzero(~outliers[:,i])[0],
+            keypoints[:,i][~outliers[:,i]])
+    return np.moveaxis(keypoints.reshape(init_shape),0,axis)
+
+
+
+'''
+def ppca(key, data, missing, num_components, num_iters=50, whiten=True):
     batch_shape = data.shape[:-1]
     data = data.reshape(-1, data.shape[-1])
     missing = missing.reshape(-1, data.shape[-1])
@@ -49,17 +75,23 @@ def ppca(key, data, missing, num_components, num_iters=50):
     vals = vals[order]
     C = C @ vecs
     latents = (data*stds)@C
+    
+    if whiten:
+        Sigma = jnp.cov(latents.T)
+        L = jnp.linalg.cholesky(Sigma)
+        latents = jnp.linalg.solve(L, latents.T).T
+        C = jnp.linalg.solve(L, C.T).T
     return C, means, latents.reshape(*batch_shape, num_components)
 
 
-@jax.jit
-def obs_log_prob(*, Y, mask, x, s, v, h, Cd, sigmasq, **kwargs):
-    k,d = Y.shape[-2:]
-    Gamma = center_embedding(k)
-    Ybar = Gamma @ (pad_affine(x)@Cd.T).reshape(*Y.shape[:-2],k-1,d)
-    sqerr = ((Y - affine_transform(Ybar,v,h))**2).sum(-1)
-    return -1/2 * sqerr/s/sigmasq - 3/2 * jnp.log(s*sigmasq*jnp.pi)
-
+def whiten(x):
+    shape,x = x.shape, x.reshape(-1,x.shape[-1])
+    mu = x[mask.flatten()>0].mean(0)
+    Sigma = jnp.cov(x[mask.flatten()>0].T)
+    L = jnp.linalg.cholesky(Sigma)
+    x = jnp.linalg.solve(L, (x-mu).T).T
+    return x.reshape(shape), L
+'''
 
 def center_embedding(k):
     return jnp.linalg.svd(jnp.eye(k) - jnp.ones((k,k))/k)[0][:,:-1]
@@ -74,15 +106,15 @@ def merge_data(data_dict, keys=None, batch_length=None):
     if keys is None: keys = sorted(data_dict.keys())
     max_length = np.max([data_dict[k].shape[0] for k in keys])
     if batch_length is None: batch_length = max_length
-    else: max_length = int(np.ceil(max_length/batch_length)*batch_length)
-      
+        
     def reshape(x):
-        x = np.concatenate([x, np.zeros((max_length-x.shape[0],*x.shape[1:]))],axis=0)
+        padding = (-x.shape[0])%batch_length
+        x = np.concatenate([x, np.zeros((padding,*x.shape[1:]))],axis=0)
         return x.reshape(-1, batch_length, *x.shape[1:])
     
     data = np.concatenate([reshape(data_dict[k]) for k in keys],axis=0)
     mask = np.concatenate([reshape(np.ones(data_dict[k].shape[0])) for k in keys],axis=0)
-    keys = [(k,i) for k in keys for i in range(int(len(data_dict[k])/batch_length+1))]
+    keys = [(k,i) for k in keys for i in range(int(np.ceil(len(data_dict[k])/batch_length)))]
     return data, mask, keys
 
 def ensure_symmetric(X):
@@ -255,4 +287,48 @@ def ar_to_lds(As, bs, Qs, Cs):
     C_ = C_.at[:,-k:].set(Cs)
     return A_, b_, Q_, C_
 
+def gaussian_log_prob(x, mu, sigma_inv):
+    return (-((mu-x)[...,na,:]*sigma_inv*(mu-x)[...,:,na]).sum((-1,-2))/2
+            +jnp.log(jnp.linalg.det(sigma_inv))/2)
+
+
+def latent_log_prob(*, x, z, Ab, Q, **kwargs):
+    Qinv = jnp.linalg.inv(Q)
+    Qdet = jnp.linalg.det(Q)
+    
+    nlags = Ab.shape[2]//Ab.shape[1]
+    x_lagged = get_lags(x, nlags)
+    x_pred = (Ab[z] @ pad_affine(x_lagged)[...,na])[...,0]
+    
+    d = x_pred - x[:,nlags:]
+    return (-(d[...,na,:]*Qinv[z]*d[...,:,na]).sum((2,3))/2
+            -jnp.log(Qdet[z])/2  -jnp.log(2*jnp.pi)*Q.shape[-1]/2)
+
+def stateseq_log_prob(*, z, pi, **kwargs):
+    return jnp.log(pi[z[:,:-1],z[:,1:]])
+
+def scale_log_prob(*, s, nu_s, s_0, **kwargs):
+    return -nu_s*s_0 / s / 2 - (1+nu_s/2)*jnp.log(s)
+    
+def location_log_prob(*, v, sigmasq_loc):
+    d = v[:,:-1]-v[:,1:]
+    return (-(d**2).sum(-1)/sigmasq_loc/2 
+            -v.shape[-1]/2*jnp.log(sigmasq_loc*2*jnp.pi))
+
+def obs_log_prob(*, Y, x, s, v, h, Cd, sigmasq, **kwargs):
+    k,d = Y.shape[-2:]
+    Gamma = center_embedding(k)
+    Ybar = Gamma @ (pad_affine(x)@Cd.T).reshape(*Y.shape[:-2],k-1,d)
+    sqerr = ((Y - affine_transform(Ybar,v,h))**2).sum(-1)
+    return (-1/2 * sqerr/s/sigmasq - d/2 * jnp.log(2*s*sigmasq*jnp.pi))
+
+@jax.jit
+def log_joint_likelihood(*, Y, mask, x, s, v, h, z, pi, Ab, Q, Cd, sigmasq, sigmasq_loc, nu_s, s_0, **kwargs):
+    nlags = Ab.shape[2]//Ab.shape[1]
+    return {
+        'Y': (obs_log_prob(Y=Y, x=x, s=s, v=v, h=h, Cd=Cd, sigmasq=sigmasq)*mask[:,:,na]).sum(),
+        'x': (latent_log_prob(x=x, z=z, Ab=Ab, Q=Q)*mask[:,nlags:]).sum(),
+        'z': (stateseq_log_prob(z=z, pi=pi)*mask[:,nlags+1:]).sum(),
+        'v': (location_log_prob(v=v, sigmasq_loc=sigmasq_loc)*mask[:,1:]).sum(),
+        's': (scale_log_prob(s=s, nu_s=nu_s, s_0=s_0)*mask[:,:,na]).sum()}
 

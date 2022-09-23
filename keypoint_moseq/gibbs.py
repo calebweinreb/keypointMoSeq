@@ -14,12 +14,12 @@ def resample_latents(key, *, Y, mask, v, h, z, s, Cd, sigmasq, Ab, Q, **kwargs):
     Cd = jnp.kron(Gamma, jnp.eye(Y.shape[-1])) @ Cd
     ys = inverse_affine_transform(Y,v,h).reshape(*Y.shape[:-2],-1)
     A, B, Q, C, D = *ar_to_lds(Ab[...,:-1],Ab[...,-1],Q,Cd[...,:-1]),Cd[...,-1]
-    R = jnp.repeat(s*sigmasq,Y.shape[-1],axis=-1)[:,nlags:]
-    mu0,S0 = jnp.zeros((n,d*nlags)),jnp.repeat(jnp.eye(d*nlags)[na]*10,n,axis=0)
-    xs = jax.vmap(kalman_sample, in_axes=(0,0,0,0,0,0,0,0,0,na,na,0))(
-        jr.split(key, ys.shape[0]), ys[:,nlags:], mask[:,nlags:], 
-        mu0, S0, A[z], B[z], Q[z], jnp.linalg.inv(Q)[z], C, D, R)
-    xs = jnp.concatenate([xs[:,0,:-d].reshape(-1,nlags-1,d)[::-1], xs[:,:,-d:]],axis=1)
+    R = jnp.repeat(s*sigmasq,Y.shape[-1],axis=-1)[:,nlags-1:]
+    mu0,S0 = jnp.zeros(d*nlags),jnp.eye(d*nlags)*10
+    xs = jax.vmap(kalman_sample, in_axes=(0,0,0,0,na,na,na,na,na,na,na,0))(
+        jr.split(key, ys.shape[0]), ys[:,nlags-1:], mask[:,nlags-1:-1], z,
+        mu0, S0, A, B, Q, C, D, R)
+    xs = jnp.concatenate([xs[:,0,:-d].reshape(-1,nlags-1,d), xs[:,:,-d:]],axis=1)
     return xs
 
 @jax.jit
@@ -45,14 +45,13 @@ def resample_location(key, *, mask, Y, h, x, s, Cd, sigmasq, sigmasq_loc, **kwar
     mu = ((Y - (rot_matrix[...,na,:,:]*Ybar[...,na,:]).sum(-1)) \
           *(gammasq[...,na]/(s*sigmasq))[...,na]).sum(-2)
 
-    m0, S0 = mu[:,0], gammasq[:,0][...,na,na]*jnp.eye(d)
-    As = jnp.tile(jnp.eye(d), (*mask.shape,1,1))
-    Bs = jnp.zeros((*mask.shape,d))
-    Qs = jnp.tile(jnp.eye(d), (*mask.shape,1,1))*sigmasq_loc
-    Qinvs = jnp.tile(jnp.eye(d), (*mask.shape,1,1))/sigmasq_loc
-    C,D,Rs = jnp.eye(d),jnp.zeros(d),gammasq[...,na]*jnp.ones(d)
-    return jax.vmap(kalman_sample, in_axes=(0,0,0,0,0,0,0,0,0,na,na,0))(
-        jr.split(key,mask.shape[0]), mu, mask, m0, S0, As, Bs, Qs, Qinvs, C, D, Rs)[...,:-1,:]
+    m0,S0 = jnp.zeros(d), jnp.eye(d)*1e6
+    A,B,Q = jnp.eye(d)[na],jnp.zeros(d)[na],jnp.eye(d)[na]*sigmasq_loc
+    C,D,R = jnp.eye(d),jnp.zeros(d),gammasq[...,na]*jnp.ones(d)
+    z = jnp.zeros_like(mask[:,1:], dtype=int)
+
+    return jax.vmap(kalman_sample, in_axes=(0,0,0,0,na,na,na,na,na,na,na,0))(
+        jr.split(key, mask.shape[0]), mu, mask[:,:-1], z, m0, S0, A, B, Q, C, D, R)
 
 
 
@@ -109,11 +108,11 @@ def _ar_log_likelihood(x, params):
 def resample_stateseqs(key, *, x, mask, Ab, Q, pi, **kwargs):
     nlags = Ab.shape[2]//Ab.shape[1]
     log_likelihoods = jax.lax.map(partial(_ar_log_likelihood,x), (Ab, Q))
-    stateseqs = jax.vmap(sample_hmm_stateseq, in_axes=(0,0,0,na))(
+    stateseqs, log_likelihoods = jax.vmap(sample_hmm_stateseq, in_axes=(0,0,0,na))(
         jr.split(key,mask.shape[0]),
         jnp.moveaxis(log_likelihoods,0,-1),
         mask.astype(float)[:,nlags:], pi)
-    return stateseqs
+    return stateseqs, log_likelihoods
 
 @jax.jit
 def resample_scales(key, *, x, v, h, Y, Cd, sigmasq, nu_s, s_0, **kwargs):
