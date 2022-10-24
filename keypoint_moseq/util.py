@@ -3,11 +3,12 @@ import numpy as np
 from jax.config import config
 config.update('jax_enable_x64', True)
 import jax, jax.numpy as jnp, jax.random as jr
-import tensorflow_probability.substrates.jax.distributions as tfd
+from jax.tree_util import tree_map
 from itertools import groupby
 from functools import partial
 na = jnp.newaxis
 
+    
 def expected_keypoints(*, Y, v, h, x, Cd, **kwargs):
     k,d = Y.shape[-2:]
     Gamma = center_embedding(k)
@@ -44,20 +45,6 @@ def stateseq_stats(stateseqs, mask):
     usage = np.bincount(s)
     return usage, durations
 
-def merge_data(data_dict, keys=None, batch_length=None):
-    if keys is None: keys = sorted(data_dict.keys())
-    max_length = np.max([data_dict[k].shape[0] for k in keys])
-    if batch_length is None: batch_length = max_length
-        
-    def reshape(x):
-        padding = (-x.shape[0])%batch_length
-        x = np.concatenate([x, np.zeros((padding,*x.shape[1:]))],axis=0)
-        return x.reshape(-1, batch_length, *x.shape[1:])
-    
-    data = np.concatenate([reshape(data_dict[k]) for k in keys],axis=0)
-    mask = np.concatenate([reshape(np.ones(data_dict[k].shape[0])) for k in keys],axis=0)
-    keys = [(k,i) for k in keys for i in range(int(np.ceil(len(data_dict[k])/batch_length)))]
-    return data, mask, keys
 
 def ensure_symmetric(X):
     XT = jnp.swapaxes(X,-1,-2)
@@ -274,3 +261,12 @@ def log_joint_likelihood(*, Y, mask, x, s, v, h, z, pi, Ab, Q, Cd, sigmasq, sigm
         'v': (location_log_prob(v=v, sigmasq_loc=sigmasq_loc)*mask[:,1:]).sum(),
         's': (scale_log_prob(s=s, nu_s=nu_s, s_0=s_0)*mask[:,:,na]).sum()}
 
+def to_jax(data):
+    """
+    Convert all numpy arrays in a pytree (i.e. dictionary, tuple, 
+    list, or any nesting there of) to jax arrays. Leaves in the
+    pytree that are not numpy arrays will be ignored. 
+    """  
+    return tree_map(
+        lambda x: jnp.array(x) if isinstance(x,np.ndarray) else x, 
+        data)

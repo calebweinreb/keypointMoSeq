@@ -5,17 +5,25 @@ from keypoint_moseq.util import *
 from sklearn.decomposition import PCA
 na = jnp.newaxis
 
-'''
-def initial_latents(*, Y, mask, v, h, latent_dim, num_samples=100000, **kwargs):
+
+def align_egocentric(Y, *, use_bodyparts, anterior_bodyparts, posterior_bodyparts, **config):
+    anterior_keypoints = jnp.array([use_bodyparts.index(bp) for bp in anterior_bodyparts])
+    posterior_keypoints = jnp.array([use_bodyparts.index(bp) for bp in posterior_bodyparts])
+    h = initial_heading(posterior_keypoints, anterior_keypoints, Y=Y)
+    v = initial_location(Y=Y)
+    return inverse_affine_transform(Y,v,h) 
+
+
+def fit_pca(*, Y, conf, mask, PCA_interp_confidence=0.5, 
+            PCA_fitting_num_frames=100000, **config):
+    
     n,t,k,d = Y.shape
-    y = center_embedding(k).T @ inverse_affine_transform(Y,v,h) 
-    yflat = y.reshape(t*n, (k-1)*d)
-    ysample = np.array(yflat)[np.random.choice(t*n,num_samples)]
-    pca = PCA(n_components=latent_dim, whiten=True).fit(ysample)
-    latents = jnp.array(pca.transform(yflat).reshape(n,t,latent_dim))
-    Cd = jnp.array(jnp.hstack([pca.components_.T, pca.mean_[:,na]]))
-    return latents, Cd, pca
-'''
+    Y = interpolate_keypoints(np.array(Y), np.array(conf)<PCA_interp_confidence)
+    Y_aligned = align_egocentric(jnp.array(Y), **config)
+    Y_flat = (center_embedding(k).T @ Y_aligned)[mask>0].reshape(-1, (k-1)*d)
+    Y_sample = np.array(Y_flat)[np.random.choice(
+        Y_flat.shape[0],PCA_fitting_num_frames)]
+    return PCA(n_components=Y_flat.shape[-1]).fit(Y_sample)
 
 def initial_latents(*, Y, mask, v, h, latent_dim, num_samples=100000, whiten=True, pca=None, **kwargs):
     n,t,k,d = Y.shape

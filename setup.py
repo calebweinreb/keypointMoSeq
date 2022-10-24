@@ -17,9 +17,16 @@ setuptools.setup(
     ],
     python_requires='>=3.7',
     install_requires=[
-        'jax>=0.3',
         'tfp-nightly[jax]',
         'numba',
+        'numpy',
+        'matplotlib',
+        'scikit-learn',
+        'tqdm',
+        'joblib',
+        'ipykernel',
+        'imageio',
+        'pyyaml'
     ], 
     url='https://github.com/calebweinreb/keypointMoSeq'
 )
