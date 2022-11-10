@@ -1,5 +1,6 @@
 import numpy as np
 import os
+from textwrap import wrap
 import matplotlib.pyplot as plt
 plt.rcParams['figure.dpi'] = 100
 from keypoint_moseq.util import center_embedding, get_durations, get_usages
@@ -109,7 +110,7 @@ def plot_progress(*, history, mask, states, iteration,
     fig.set_size_inches(fig_size)
     plt.tight_layout()
     if save:
-        assert name and project_directory, (
+        assert name and project_directory, wrap(
             'Cannot save figure if ``name`` or ``project_directory`` '
             'is None. Provide these arguments or set ``save=False``')
         save_path = os.path.join(project_directory,'figures',name)+'.pdf'

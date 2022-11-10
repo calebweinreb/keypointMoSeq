@@ -3,6 +3,7 @@ from keypoint_moseq.util import transform_data_for_pca, align_egocentric, interp
 from keypoint_moseq.model.transitions import sample_hdp_transitions, sample_transitions
 from keypoint_moseq.model.gibbs import resample_scales, resample_stateseqs
 from keypoint_moseq.model.distributions import sample_mniw
+from textwrap import wrap
 na = jnp.newaxis
 
 
@@ -111,7 +112,7 @@ def initialize_model(states=None,
                      random_seed=0, 
                      **kwargs):
     
-    if None in (states,params): assert not None in (pca,Y,mask), (
+    if None in (states,params): assert not None in (pca,Y,mask), wrap(
         'Either provide ``states`` and ``params`` or provide a pca model and data')
         
     if key is not None: key = jnp.array(key, dtype='uint32')

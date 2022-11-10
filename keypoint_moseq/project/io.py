@@ -8,6 +8,7 @@ import os
 import cv2
 import tqdm
 import re
+from textwrap import wrap
 import pandas as pd
 from datetime import datetime
 from textwrap import fill
@@ -198,7 +199,7 @@ def setup_project(project_directory, deeplabcut_config=None,
     """
 
     if os.path.exists(project_directory) and not overwrite:
-        print(f'The directory `{project_directory}` already exists. Use `overwrite=True` or pick a different name for the project directory')
+        print(wrap(f'The directory `{project_directory}` already exists. Use `overwrite=True` or pick a different name for the project directory'))
         return
         
     if deeplabcut_config is not None: 
@@ -311,7 +312,7 @@ def format_data(coordinates, *, confidences=None, keys=None,
         N,K,D = coordinates[key].shape
         keypoint_ix = np.array([bodyparts.index(bp) for bp in use_bodyparts])
         
-        assert K==len(bodyparts), (
+        assert K==len(bodyparts), wrap(
             f'`The legth of `bodyparts`` ({len(bodyparts)}) must match the number \
             of keypoints in ``coordinates[{key}]`` ({K})')
         
@@ -350,7 +351,9 @@ def save_pca(pca, project_directory, pca_path=None):
 def load_pca(project_directory, pca_path=None):
     if pca_path is None:
         pca_path = os.path.join(project_directory,'misc','pca.p')
-        assert os.path.exists(pca_path), f'No PCA model found at {pca_path}. Either save a new model or specify an alternative path'
+        assert os.path.exists(pca_path), wrap(
+            f'No PCA model found at {pca_path}. Either save '
+            'a new model or specify an alternative path')
     return joblib.load(pca_path)
 
 
@@ -358,8 +361,9 @@ def load_last_model(project_directory):
     pattern = re.compile(r'(\d{4}_\d{1,2}_\d{1,2}-\d{2}_\d{2}_\d{2})')
     model_dir = os.path.join(project_directory,'models')
     paths = list(filter(lambda p: pattern.search(p), os.listdir(model_dir)))
-    assert len(paths)>0, (f'There are no files in {model_dir} that contain  '
-                          'a date string with format %Y_%m_%d-%H_%M_%S')
+    assert len(paths)>0, wrap(
+        f'There are no files in {model_dir} that contain  '
+        'a date string with format %Y_%m_%d-%H_%M_%S')
     
     last_model_name = sorted(paths, key=lambda p: datetime.strptime(
             pattern.search(p).group(), '%Y_%m_%d-%H_%M_%S'))[-1]
@@ -401,7 +405,7 @@ def load_keypoints_from_deeplabcut_file(filepath, *, bodyparts, **kwargs):
     if ext=='.csv': df = pd.read_csv(filepath)
         
     dlc_bodyparts = list(zip(*df.columns.to_list()))[1][::3]
-    assert dlc_bodyparts==tuple(bodyparts), (
+    assert dlc_bodyparts==tuple(bodyparts), wrap(
         f'{os.path.basename(filepath)} contains bodyparts'
         f'\n\n{dlc_bodyparts}\n\nbut expected\n\n{bodyparts}')
     
@@ -421,8 +425,8 @@ def load_keypoints_from_deeplabcut_list(paths, **kwargs):
 def load_keypoints_from_deeplabcut(*, video_directory, directory=None, **kwargs):
     if directory is None:
         directory = video_directory
-        print(f'Searching in {directory}. Use the ``directory`` '
-              'argument to specify another search location')
+        print(wrap(f'Searching in {directory}. Use the ``directory`` '
+              'argument to specify another search location'))
     filepaths = [
         os.path.join(directory,f) 
         for f in os.listdir(directory)
