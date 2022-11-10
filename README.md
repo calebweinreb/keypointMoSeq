@@ -14,16 +14,15 @@ conda create -n keypoint_moseq python=3.9
 conda activate keypoint_moseq
 ```
 
-Install opencv and jax
+Install jax
 ```
-conda install -c conda-forge opencv
 pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ```
 
 Clone or download the this github repo and pip install:
 ```
 git clone https://github.com/calebweinreb/keypointMoSeq.git
-pip install -e keypoint_moseq
+pip install keypoint_moseq
 ```
 
 Make the new environment accessible in jupyter 

@@ -26,7 +26,12 @@ setuptools.setup(
         'joblib',
         'ipykernel',
         'imageio',
-        'pyyaml'
+        'pyyaml',
+        'vidio',
+        'holoviews[recommended]',
+        'bokeh',
+        'pandas',
+        'tables'
     ], 
     url='https://github.com/calebweinreb/keypointMoSeq'
 )
