@@ -2,7 +2,7 @@ import joblib
 import os
 import numpy as np
 import tqdm
-from textwrap import wrap
+from textwrap import fill
 from datetime import datetime
 from keypoint_moseq.model.gibbs import resample_model
 from keypoint_moseq.model.initialize import initialize_model
@@ -51,7 +51,7 @@ def fit_model(model,
     
     if save_every_n_iters>0:
         if save_path is None:
-            assert project_directory, wrap(
+            assert project_directory, fill(
                 'To save the model during fitting, provide '
                 'a ``project_directory`` or ``save_path``. '
                 'Otherwise turn off model saving with ``save_every_n_iters=0``')
@@ -75,7 +75,7 @@ def fit_model(model,
             plot_progress(history=history, iteration=iteration, **data, **model)
 
         if save_every_n_iters>0 and (iteration%save_every_n_iters)==0:
-            if verbose: print(wrap(f'Saving model to {save_path}'))
+            if verbose: print(fill(f'Saving model to {save_path}'))
             save_model(model, data, history, batch_info, iteration, 
                        save_path, save_history=save_history, 
                        save_states=save_states, save_data=save_data)
@@ -94,7 +94,7 @@ def resume_fitting(model, *, batch_info, iteration, history,
    
     if 'ARHMM' in name and not ar_only:
         new_name = name.replace('ARHMM','KPSLDS')
-        print(wrap(f'Switching model name from {name} to {new_name}'))
+        print(fill(f'Switching model name from {name} to {new_name}'))
         name = new_name
     
     return fit_model(

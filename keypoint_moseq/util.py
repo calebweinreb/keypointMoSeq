@@ -1,7 +1,7 @@
 import numpy as np
 import os
 import tqdm
-from textwrap import wrap
+from textwrap import fill
 from numba import njit, prange
 from jax.config import config
 config.update('jax_enable_x64', True)
@@ -340,8 +340,8 @@ def find_matching_videos(keys, video_directory):
     for key in keys:
         matches = [path for video,path in video_to_path.items() 
                    if os.path.basename(key).startswith(video)]
-        assert len(matches)>0, wrap(f'No matching videos found for {key}')
-        assert len(matches)<2, wrap(f'More than one video matches {key} ({matches})')
+        assert len(matches)>0, fill(f'No matching videos found for {key}')
+        assert len(matches)<2, fill(f'More than one video matches {key} ({matches})')
         video_paths.append(matches[0])
     return video_paths
 
