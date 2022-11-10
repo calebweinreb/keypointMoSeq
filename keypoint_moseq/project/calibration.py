@@ -196,24 +196,8 @@ def noise_calibration_widget(project_directory, coordinates, confidences,
                  f'conf_threshold: {conf_threshold:.6f}']
         estimator_textbox.value='<br>'.join(lines)
     
-    def next_sample(event):
-        if current_sample.sample_ix < len(sample_keys)-1:
-            current_sample.event(sample_ix=current_sample.sample_ix+1)
-        sample_slider.value=int(current_sample.sample_ix)
-        
-    def prev_sample(event):
-        if current_sample.sample_ix > 0:
-            current_sample.event(sample_ix=current_sample.sample_ix-1)
-        sample_slider.value=current_sample.sample_ix 
-        
-    def save_all(event):
-        save_annotations(project_directory, annotations_stream.annotations)
-        save_params(project_directory, estimator)
-    
-    def change_sample(value):
-        current_sample.event(sample_ix=value)
-            
-    
+
+               
     prev_button = pn.widgets.Button(name='\u25c0', width=50, height=30)
     next_button = pn.widgets.Button(name='\u25b6', width=50, height=30)
     save_button = pn.widgets.Button(name='Save', width=100, align='center')
@@ -221,10 +205,27 @@ def noise_calibration_widget(project_directory, coordinates, confidences,
     zoom_slider = pn.widgets.IntSlider(name='Zoom', value=200, start=1, end=max(w,h), width=120, align='center')
     estimator_textbox = pn.widgets.StaticText(align='center')
     
+    def next_sample(event):
+        if current_sample.sample_ix < len(sample_keys)-1:
+            current_sample.event(sample_ix=int(current_sample.sample_ix)+1)
+        sample_slider.value=int(current_sample.sample_ix)
+        
+    def prev_sample(event):
+        if current_sample.sample_ix > 0:
+            current_sample.event(sample_ix=int(current_sample.sample_ix)-1)
+        sample_slider.value=int(current_sample.sample_ix) 
+        
+    def save_all(event):
+        save_annotations(project_directory, annotations_stream.annotations)
+        save_params(project_directory, estimator)
+    
+    @pn.depends(sample_slider.param.value, watch=True)
+    def change_sample(value):
+        current_sample.event(sample_ix=int(value))
+    
     prev_button.on_click(prev_sample)
     next_button.on_click(next_sample)
     save_button.on_click(save_all)
-    sample_slider.param.watch(change_sample,'value')
     estimator.add_subscriber(update_estimator_text)
     estimator.event()
 
