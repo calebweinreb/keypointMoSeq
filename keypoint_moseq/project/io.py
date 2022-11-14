@@ -1,6 +1,8 @@
 from jax.tree_util import tree_map
 import jax.numpy as jnp
+import jax
 import numpy as np
+import h5py
 import joblib
 import tqdm
 import yaml
@@ -12,7 +14,7 @@ import pandas as pd
 from datetime import datetime
 from textwrap import fill
 from vidio.read import OpenCVReader
-from keypoint_moseq.util import unwrap_stateseqs, to_np
+from keypoint_moseq.util import batch
 
 def build_yaml(sections, comments):
     text_blocks = []
@@ -26,7 +28,7 @@ def build_yaml(sections, comments):
     return '\n'.join(text_blocks)
         
 
-def generate_config(project_directory, **kwargs):
+def generate_config(project_dir, **kwargs):
     """
     Generate a config.yml file with project settings.
     Default settings will be used unless overriden by 
@@ -34,7 +36,7 @@ def generate_config(project_directory, **kwargs):
     
     Parameters
     ----------
-    project_directory: str 
+    project_dir: str 
         A file ``config.yml`` will be generated in this directory.
     
     **kwargs
@@ -63,7 +65,7 @@ def generate_config(project_directory, **kwargs):
     other = update_dict(kwargs, {
         'verbose':True,
         'conf_pseudocount': 1e-3,
-        'video_directory': '',
+        'video_dir': '',
         'keypoint_colormap': 'autumn',
         'latent_dimension': 10,
         'whiten': True,
@@ -83,7 +85,7 @@ def generate_config(project_directory, **kwargs):
     })
         
     comments = {
-        'video_directory': 'directory with videos from which keypoints were derived (used for crowd movies)',
+        'video_dir': 'directory with videos from which keypoints were derived (used for crowd movies)',
         'bodyparts': 'used to access columns in the keypoint data',
         'skeleton': 'used for visualization only',
         'use_bodyparts': 'determines the subset of bodyparts to use for modeling and the order in which they are represented',
@@ -109,7 +111,7 @@ def generate_config(project_directory, **kwargs):
         ('OTHER', other)
     ]
 
-    with open(os.path.join(project_directory,'config.yml'),'w') as f: 
+    with open(os.path.join(project_dir,'config.yml'),'w') as f: 
         f.write(build_yaml(sections, comments))
                           
         
@@ -147,41 +149,38 @@ def check_config_validity(config):
     for msg in error_messages: 
         print(fill(msg, width=70, subsequent_indent='  '), end='\n\n')
             
-def load_config(project_directory, check_if_valid=True):
+def load_config(project_dir, check_if_valid=True):
     """
-    Load config.yml from ``project_directory`` and return
+    Load config.yml from ``project_dir`` and return
     the resulting dict. Optionally check if the config is valid. 
     """
-    config_path = os.path.join(project_directory,'config.yml')
+    config_path = os.path.join(project_dir,'config.yml')
     with open(config_path, 'r') as stream:  config = yaml.safe_load(stream)
     if check_if_valid: check_config_validity(config)
     return config
 
-def update_config(project_directory, **kwargs):
+def update_config(project_dir, **kwargs):
     """
-    Update config.yml from ``project_directory`` to include
+    Update config.yml from ``project_dir`` to include
     all the key/value pairs in **kwargs.
     """
-    config = load_config(project_directory, check_if_valid=False)
+    config = load_config(project_dir, check_if_valid=False)
     config.update(kwargs)
-    generate_config(project_directory, **config)
+    generate_config(project_dir, **config)
     
         
-def setup_project(project_directory, deeplabcut_config=None, 
+def setup_project(project_dir, deeplabcut_config=None, 
                   overwrite=False, **options):
     """
     Setup a project directory with the following structure
     ```
-        project_directory
-        ├── config.yml
-        ├── misc
-        ├── figures
-        └── models
+        project_dir
+        └── config.yml
     ```
     
     Parameters
     ----------
-    project_directory: str 
+    project_dir: str 
         Path to the project directory (relative or absolute)
         
     deeplabcut_config: str, default=None
@@ -191,14 +190,14 @@ def setup_project(project_directory, deeplabcut_config=None,
         
     overwrite: bool, default=False
         Overwrite any config.yml that already exists at the path
-        ``[project_directory]/config.yml``
+        ``[project_dir]/config.yml``
         
     **options
         Used to initialize config file
     """
 
-    if os.path.exists(project_directory) and not overwrite:
-        print(fill(f'The directory `{project_directory}` already exists. Use `overwrite=True` or pick a different name for the project directory'))
+    if os.path.exists(project_dir) and not overwrite:
+        print(fill(f'The directory `{project_dir}` already exists. Use `overwrite=True` or pick a different name for the project directory'))
         return
         
     if deeplabcut_config is not None: 
@@ -218,24 +217,17 @@ def setup_project(project_directory, deeplabcut_config=None,
             dlc_options['bodyparts'] = dlc_config['bodyparts']
             dlc_options['use_bodyparts'] = dlc_config['bodyparts']
             dlc_options['skeleton'] = dlc_config['skeleton']
-            dlc_options['video_directory'] = os.path.join(dlc_config['project_path'],'videos')
+            dlc_options['video_dir'] = os.path.join(dlc_config['project_path'],'videos')
                 
         options = {**dlc_options, **options}
     
-    if not os.path.exists(project_directory):
-        os.makedirs(project_directory)
-    generate_config(project_directory, **options)
-        
-    for name in ['figures','models','misc']:
-        subdirectory = os.path.join(project_directory,name)
-        if not os.path.exists(subdirectory): 
-            os.makedirs(subdirectory)
+    if not os.path.exists(project_dir):
+        os.makedirs(project_dir)
+    generate_config(project_dir, **options)
             
     
-#
-
 def format_data(coordinates, *, confidences=None, keys=None, 
-                batch_length, bodyparts, use_bodyparts, batch_overlap=30,
+                batch_length, bodyparts, use_bodyparts,
                 conf_pseudocount=1e-3, added_noise_level=0.1, **kwargs):
     """
     Reshapes variable-length time-series of keypoint coordinates
@@ -275,7 +267,7 @@ def format_data(coordinates, *, confidences=None, keys=None,
     
     batch_length: int, default=None
         Length of each batch. If ``None``, a length is chosen so that
-        no time-series are broken across batched. 
+        no time-series are broken across batches. 
         
     Returns
     -------
@@ -297,104 +289,107 @@ def format_data(coordinates, *, confidences=None, keys=None,
             in the form of tuples (key, start, end).
     """    
     
-    if keys is None:
-        keys = sorted(coordinates.keys())
-    if batch_length is None: 
-        batch_length = np.max([coordinates[k].shape[0] for k in keys])   
-    if confidences is None:
-        confidences = {k:np.ones_like(v[...,0]) for k,v in coordinates.items()}
-
-        
-    Y,conf,mask,batch_info = [],[],[],[]
+    if keys is None: keys = sorted(coordinates.keys()) 
+    keypoint_ix = np.array([bodyparts.index(bp) for bp in use_bodyparts])
     
-    for key in keys:
-        N,K,D = coordinates[key].shape
-        keypoint_ix = np.array([bodyparts.index(bp) for bp in use_bodyparts])
-        
-        assert K==len(bodyparts), fill(
-            f'`The legth of `bodyparts`` ({len(bodyparts)}) must match the number \
-            of keypoints in ``coordinates[{key}]`` ({K})')
-        
-        for start in range(0,N,batch_length):
-            
-            end = min(start+batch_length+batch_overlap, N)
-            pad_length = batch_length+batch_overlap-(end-start)
-            padding = np.zeros((pad_length,len(keypoint_ix),D))
-            batch_info.append((key,start,end))
-            
-            mask.append(np.hstack([
-                np.ones(end-start),
-                np.zeros(pad_length)]))
-            
-            Y.append(np.concatenate([
-                coordinates[key][start:end,keypoint_ix],
-                padding],axis=0))
-            
-            if confidences is not None: 
-                conf.append(np.concatenate([
-                    confidences[key][start:end,keypoint_ix],
-                    padding[...,0]],axis=0))
-
-    Y = np.stack(Y)
-    mask = np.stack(mask)
-    conf = None if confidences is None else np.stack(conf)+conf_pseudocount
-    if added_noise_level>0 : Y += np.random.uniform(-added_noise_level,added_noise_level,Y.shape)
-    return {'mask':mask, 'Y':Y, 'conf':conf}, batch_info
+    Y,mask,batch_info = batch(coordinates, batch_length=batch_length, keys=keys)
+    conf = None if confidences is None else batch(
+        confidences, batch_length=batch_length, keys=keys)[0]
+    
+    assert Y.shape[-2]==len(bodyparts), fill(
+        f'`The legth of `bodyparts`` ({len(bodyparts)}) must match' 
+        f' the number of keypoints in ``coordinates[{key}]`` ({K})')
+    
+    Y = Y[...,keypoint_ix,:] 
+    if conf is not None: 
+        conf = conf[...,keypoint_ix]+conf_pseudocount    
+    if added_noise_level>0 : 
+        Y += np.random.uniform(-added_noise_level,added_noise_level,Y.shape)
+    return jax.device_put({'mask':mask, 'Y':Y, 'conf':conf}), batch_info
 
 
-def save_pca(pca, project_directory, pca_path=None):
+def save_pca(pca, project_dir, pca_path=None):
     if pca_path is None: 
-        pca_path = os.path.join(project_directory,'misc','pca.p')
+        pca_path = os.path.join(project_dir,'pca.p')
     joblib.dump(pca, pca_path)
     
-def load_pca(project_directory, pca_path=None):
+def load_pca(project_dir, pca_path=None):
     if pca_path is None:
-        pca_path = os.path.join(project_directory,'misc','pca.p')
+        pca_path = os.path.join(project_dir,'pca.p')
         assert os.path.exists(pca_path), fill(
-            f'No PCA model found at {pca_path}. Either save '
-            'a new model or specify an alternative path')
+            f'No PCA model found at {pca_path}')
     return joblib.load(pca_path)
 
 
-def load_last_model(project_directory):
+def load_last_checkpoint(project_dir):
     pattern = re.compile(r'(\d{4}_\d{1,2}_\d{1,2}-\d{2}_\d{2}_\d{2})')
-    model_dir = os.path.join(project_directory,'models')
-    paths = list(filter(lambda p: pattern.search(p), os.listdir(model_dir)))
+    paths = list(filter(lambda p: pattern.search(p), os.listdir(project_dir)))
     assert len(paths)>0, fill(
-        f'There are no files in {model_dir} that contain  '
-        'a date string with format %Y_%m_%d-%H_%M_%S')
+        f'There are no directories in {project_dir} that contain'
+        ' a date string with format %Y_%m_%d-%H_%M_%S')
     
-    last_model_name = sorted(paths, key=lambda p: datetime.strptime(
-            pattern.search(p).group(), '%Y_%m_%d-%H_%M_%S'))[-1]
-    save_dict = joblib.load(os.path.join(model_dir,last_model_name))
-    return save_dict,last_model_name
+    name = sorted(
+        paths, key=lambda p: datetime.strptime(
+        pattern.search(p).group(), '%Y_%m_%d-%H_%M_%S')
+    )[-1]
+    
+    path = os.path.join(project_dir,name,'checkpoint.p')
+    return load_checkpoint(path=path), name
 
 
-def save_model(model, data, history, batch_info, 
-               iteration, save_path, save_history=True, 
-               save_states=True, save_data=True):
+
+def load_checkpoint(project_dir=None, name=None, path=None):
+    if path is None: 
+        assert project_dir is not None and name is not None, fill(
+            '``name`` and ``project_dir`` are required if no ``path`` is given.')
+        path = os.path.join(project_dir,name,'checkpoint.p')
+    return joblib.load(path)
+
+
+def save_checkpoint(model, data, history, batch_info, iteration, 
+                    path=None, name=None, project_dir=None,
+                    save_history=True, save_states=True, save_data=True):
+    
+    if path is None: 
+        assert project_dir is not None and name is not None, fill(
+            '``name`` and ``project_dir`` are required if no ``path`` is given.')
+        path = os.path.join(project_dir,name,'checkpoint.p')
+
+    dirname = os.path.dirname(path)
+    if not os.path.exists(dirname): 
+        print(fill(f'Creating the directory {dirname}'))
+        os.makedirs(dirname)
     
     save_dict = {
         'batch_info': batch_info,
         'iteration' : iteration,
-        'hypparams' : to_np(model['hypparams']),
-        'params'    : to_np(model['params']), 
-        'key'       : np.array(model['key']),
-        'name'      : os.path.splitext(os.path.basename(save_path))[0]}
+        'hypparams' : jax.device_get(model['hypparams']),
+        'params'    : jax.device_get(model['params']), 
+        'seed'      : np.array(model['seed']),
+        'name'      : name}
 
-    if save_data: save_dict.update(to_np(data))
-    if save_states or save_data: save_dict['mask'] = np.array(data['mask'])
-    if save_history: save_dict['history'] = {k:np.array(v) for k,v in history.items()}
+    if save_data: 
+        save_dict.update(jax.device_get(data))
+        
+    if save_states or save_data: 
+        save_dict['mask'] = np.array(data['mask'])
         
     if save_states: 
-        save_dict['states'] = to_np(model['states'])
-        save_dict['syllable_seqs'] = unwrap_stateseqs(
-            np.array(model['states']['z']), 
-            np.array(data['mask']), batch_info)
+        save_dict['states'] = jax.device_get(model['states'])
+        save_dict['noise_prior'] = jax.device_get(model['noise_prior'])
         
-    joblib.dump(save_dict, save_path)
+    if save_history:
+        save_dict['history'] = history
+        
+    joblib.dump(save_dict, path)
 
-
+    
+def load_results(project_dir=None, name=None, path=None):
+    if path is None: 
+        assert project_dir is not None and name is not None, fill(
+            '``name`` and ``project_dir`` are required if no ``path`` is given.')
+        path = os.path.join(project_dir,name,'results.h5')
+    return load_hdf5(path)
 
 
 def load_keypoints_from_deeplabcut_file(filepath, *, bodyparts, **kwargs):
@@ -416,14 +411,15 @@ def load_keypoints_from_deeplabcut_file(filepath, *, bodyparts, **kwargs):
 def load_keypoints_from_deeplabcut_list(paths, **kwargs): 
     coordinates,confidences = {},{}
     for filepath in tqdm.tqdm(paths, desc='Loading from deeplabcut'):
-        coordinates[filepath],confidences[filepath] = \
+        filename = os.path.basename(filepath)
+        coordinates[filename],confidences[filename] = \
             load_keypoints_from_deeplabcut_file(filepath, **kwargs)
     return coordinates,confidences
         
     
-def load_keypoints_from_deeplabcut(*, video_directory, directory=None, **kwargs):
+def load_keypoints_from_deeplabcut(*, video_dir, directory=None, **kwargs):
     if directory is None:
-        directory = video_directory
+        directory = video_dir
         print(fill(f'Searching in {directory}. Use the ``directory`` '
               'argument to specify another search location'))
     filepaths = [
@@ -432,4 +428,51 @@ def load_keypoints_from_deeplabcut(*, video_directory, directory=None, **kwargs)
         if os.path.splitext(f)[1] in ['.csv','.h5']]
     return load_keypoints_from_deeplabcut_list(filepaths, **kwargs)
 
+
+# hdf5 save/load routines modified from
+# https://gist.github.com/nirum/b119bbbd32d22facee3071210e08ecdf
+
+def save_hdf5(filepath, save_dict):
+    """Saves a pytree with a dict at the root to an hdf5 file
+    Args:
+        filepath: str, Path of the hdf5 file to create.
+        tree: pytree, Recursive collection of tuples, lists, dicts, 
+        numpy arrays to store. The root is assumed to be a dict. """
+    with h5py.File(filepath, 'w') as f:
+        for k,tree in save_dict.items():
+            _savetree_hdf5(jax.device_get(tree), f, k)
+
+def load_hdf5(filepath):
+    """Loads a pytree with a dict at the root from an hdf5 file.
+    Args:
+        filepath: str, Path of the hdf5 file to load."""
+    with h5py.File(filepath, 'r') as f:
+        return {k:_loadtree_hdf5(f[k]) for k in f}
+
+def _savetree_hdf5(tree, group, name):
+    """Recursively save a pytree to an h5 file group."""
+    if isinstance(tree, np.ndarray):
+        group.create_dataset(name, data=tree)
+    else:
+        subgroup = group.create_group(name)
+        subgroup.attrs['type'] = type(tree).__name__
+        if isinstance(tree, tuple) or isinstance(tree, list):
+            for k, subtree in enumerate(tree):
+                _savetree_hdf5(subtree, subgroup, f'arr{k}')
+        elif isinstance(tree, dict):
+            for k, subtree in tree.items():
+                _savetree_hdf5(subtree, subgroup, k)
+        else: raise ValueError(f'Unrecognized type {type(tree)}')
+
+def _loadtree_hdf5(leaf):
+    """Recursively load a pytree from an h5 file group."""
+    if isinstance(leaf, h5py.Dataset):
+        return np.array(leaf)
+    else:
+        leaf_type = leaf.attrs['type']
+        values = map(_loadtree_hdf5, leaf.values())
+        if leaf_type == 'dict': return dict(zip(leaf.keys(), values))
+        elif leaf_type == 'list': return list(values)
+        elif leaf_type == 'tuple': return tuple(values)
+        else: raise ValueError(f'Unrecognized type {leaf_type}')
 

@@ -1,0 +1,82 @@
+    # Project definitions (do not edit)
+Task: moseq_example
+scorer: caleb
+date: Nov9
+multianimalproject: false
+identity:
+
+    # Project path (change when moving around)
+project_path: moseq_example-caleb-2022-11-09
+
+    # Annotation data set configuration (and individual video cropping parameters)
+video_sets:
+  ? /n/groups/datta/caleb/22_3_1_keypoint_MOSEQ/22_10_22_DLC_workshop/keypointMoSeq/examples/data/videos/21_11_8_one_mouse.top.ir.mp4
+  : crop: 0, 640, 0, 576
+  ? /n/groups/datta/caleb/22_3_1_keypoint_MOSEQ/22_10_22_DLC_workshop/keypointMoSeq/examples/data/videos/21_12_2_def6b_2.top.ir.mp4
+  : crop: 0, 640, 0, 576
+
+
+bodyparts:
+- tail
+- spine4
+- spine3
+- spine2
+- spine1
+- head
+- nose
+- right ear
+- left ear
+
+
+skeleton:
+- - tail
+  - spine4
+- - spine4
+  - spine3
+- - spine3
+  - spine2
+- - spine2
+  - spine1
+- - spine1
+  - head
+- - nose
+  - head
+- - left ear
+  - head
+- - right ear
+  - head
+
+    # Fraction of video to start/stop when extracting frames for labeling/refinement
+start: 0
+stop: 1
+numframes2pick: 20
+
+
+skeleton_color: black
+pcutoff: 0.6
+dotsize: 12
+alphavalue: 0.7
+colormap: rainbow
+
+    # Training,Evaluation and Analysis configuration
+TrainingFraction:
+- 0.95
+iteration: 0
+default_net_type: resnet_50
+default_augmenter: default
+snapshotindex: -1
+batch_size: 8
+
+    # Cropping Parameters (for analysis and outlier frame detection)
+cropping: false
+    #if cropping is true for analysis, then set the values here:
+x1: 0
+x2: 640
+y1: 277
+y2: 624
+
+    # Refinement configuration (parameters from annotation dataset configuration also relevant in this stage)
+corner2move2:
+- 50
+- 50
+move2corner: true

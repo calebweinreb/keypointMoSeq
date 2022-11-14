@@ -1,6 +1,7 @@
 import numpy as np
 import tqdm
 import os
+from textwrap import fill
 from vidio.read import OpenCVReader
 from keypoint_moseq.project.io import update_config
 from keypoint_moseq.util import find_matching_videos
@@ -33,24 +34,20 @@ def sample_error_frames(confidences, bodyparts, use_bodyparts,
     sample_keys = [sample_keys[i] for i in np.random.permutation(len(sample_keys))]    
     return sample_keys
 
-def load_sample_images(sample_keys, video_directory):
+def load_sample_images(sample_keys, video_dir):
     keys = sorted(set([k[0] for k in sample_keys]))
-    videos = find_matching_videos(keys,video_directory)
+    videos = find_matching_videos(keys,video_dir)
     key_to_video = dict(zip(keys,videos))
-    
-    readers = {video: OpenCVReader(
-        os.path.join(video_directory,video)
-    ) for video in videos}
-    
+    readers = {video: OpenCVReader(os.path.join(video_dir,video)) for video in videos}
     pbar = tqdm.tqdm(sample_keys, desc='Loading sample frames', position=0, leave=True)
-    return {(key,frame,bodypart):readers[key_to_video[key]].read(frame) 
+    return {(key,frame,bodypart):readers[key_to_video[key]][frame]
             for key,frame,bodypart in pbar}
 
 
-def load_annotations(project_directory):
+def load_annotations(project_dir):
     annotations = {}
     annotations_path = os.path.join(
-        project_directory,'misc','error_annotations.csv')
+        project_dir,'error_annotations.csv')
     if os.path.exists(annotations_path):
         for l in open(annotations_path,'r').read().split('\n')[1:]:
             key,frame,bodypart,x,y = l.split(',')
@@ -58,16 +55,16 @@ def load_annotations(project_directory):
             annotations[sample_key] = (float(x),float(y))
     return annotations
         
-def save_annotations(project_directory, annotations): 
+def save_annotations(project_dir, annotations): 
     output = ['key,frame,bodypart,x,y']
     for (key,frame,bodypart),(x,y) in annotations.items():
         output.append(f'{key},{frame},{bodypart},{x},{y}')
-    annotations_path = os.path.join(
-        project_directory,'misc','error_annotations.csv')        
-    open(annotations_path,'w').write('\n'.join(output))
+    path = os.path.join(project_dir,'error_annotations.csv')        
+    open(path,'w').write('\n'.join(output))
+    print(fill('Annotations saved to {path}'))
     
-def save_params(project_directory, estimator):
-    update_config(project_directory, 
+def save_params(project_dir, estimator):
+    update_config(project_dir, 
                   conf_threshold=float(estimator.conf_threshold),
                   slope=float(estimator.slope), 
                   intercept=float(estimator.intercept))
@@ -83,7 +80,7 @@ def confs_and_dists_from_annotations(coordinates, confidences,
     return confs,dists
 
 
-def noise_calibration_widget(project_directory, coordinates, confidences,
+def noise_calibration_widget(project_dir, coordinates, confidences,
                              sample_keys, sample_images, annotations, *, 
                              keypoint_colormap, bodyparts, skeleton, 
                              error_estimator, conf_threshold, 
@@ -216,8 +213,8 @@ def noise_calibration_widget(project_directory, coordinates, confidences,
         sample_slider.value=int(current_sample.sample_ix) 
         
     def save_all(event):
-        save_annotations(project_directory, annotations_stream.annotations)
-        save_params(project_directory, estimator)
+        save_annotations(project_dir, annotations_stream.annotations)
+        save_params(project_dir, estimator)
     
     @pn.depends(sample_slider.param.value, watch=True)
     def change_sample(value):
@@ -251,15 +248,15 @@ def noise_calibration_widget(project_directory, coordinates, confidences,
     return pn.Row(controls, img_dmap, scatter_dmap)
 
 
-def noise_calibration(project_directory, coordinates, confidences, *, 
-                      bodyparts, use_bodyparts, video_directory, **kwargs):
+def noise_calibration(project_dir, coordinates, confidences, *, 
+                      bodyparts, use_bodyparts, video_dir, **kwargs):
 
     sample_keys = sample_error_frames(confidences, bodyparts, use_bodyparts)
-    annotations = load_annotations(project_directory)
+    annotations = load_annotations(project_dir)
     sample_keys.extend(annotations.keys())
-    sample_images = load_sample_images(sample_keys, video_directory)
+    sample_images = load_sample_images(sample_keys, video_dir)
 
     return noise_calibration_widget(
-        project_directory, coordinates, confidences, sample_keys, 
+        project_dir, coordinates, confidences, sample_keys, 
         sample_images, annotations, bodyparts=bodyparts, **kwargs)
 

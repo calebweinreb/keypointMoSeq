@@ -2,28 +2,26 @@ import joblib
 import os
 import numpy as np
 import tqdm
+import jax
 from textwrap import fill
 from datetime import datetime
 from keypoint_moseq.model.gibbs import resample_model
 from keypoint_moseq.model.initialize import initialize_model
 from keypoint_moseq.project.viz import plot_progress
-from keypoint_moseq.util import to_jax, to_np, get_durations
-from keypoint_moseq.project.io import save_model
-
-
-
-
+from keypoint_moseq.util import get_durations, batch, unbatch, estimate_coordinates, get_usages
+from keypoint_moseq.project.io import save_checkpoint, format_data, save_hdf5
     
+
+def update_history(history, iteration, model, include_states=True): 
     
-def update_history(history, iteration, *, Y, mask, states, params, **kwargs): 
-    history['iteration'].append(iteration)
-    for k,v in params.items(): 
-        if k in history: history[k].append(np.array(v))        
-    for k,v in states.items(): 
-        if k in history: history[k].append(np.array(v))
-    if 'median_duration' in history:
-        durations = get_durations(*to_np((states['z'], mask)))
-        history['median_duration'].append(np.median(durations))
+    model_snapshot = {
+        'params': jax.device_get(model['params']),
+        'seed': jax.device_get(model['seed'])}
+    
+    if include_states: 
+        model_snapshot['states'] = jax.device_get(model['states'])
+        
+    history[iteration] = model_snapshot
     return history
 
 
@@ -36,69 +34,151 @@ def fit_model(model,
               verbose=True,
               num_iters=50,
               ar_only=False,
-              history_variables=['z'],
-              history_every_n_iters=5,
-              plot_every_n_iters=10,   
-              project_directory=None,
-              save_name=None,
-              save_path=None,
-              save_every_n_iters=10,
-              save_history=True,
-              save_states=True,
+              name=None,
+              project_dir=None,
               save_data=True,
+              save_states=True,
+              save_history=True,
+              save_every_n_iters=10,
+              history_every_n_iters=10,
+              states_in_history=True,
+              plot_every_n_iters=10,  
+              save_progress_figs=True,
               **kwargs):
     
     
-    if save_every_n_iters>0:
-        if save_path is None:
-            assert project_directory, fill(
-                'To save the model during fitting, provide '
-                'a ``project_directory`` or ``save_path``. '
-                'Otherwise turn off model saving with ``save_every_n_iters=0``')
-            if save_name is None: 
-                date_str = str(datetime.now().strftime('%Y_%m_%d-%H_%M_%S'))
-                suffix = 'ARHMM' if ar_only else 'KPSLDS'
-                save_name = f'{date_str}-{suffix}.p'
-            else: save_name = os.path.splitext(save_name)[0]+'.p'
-            save_path = os.path.join(project_directory,'models',save_name)
+    if save_every_n_iters>0 or save_progress_figs:
+        assert project_dir, fill(
+            'To save checkpoints or progress plots during fitting, provide '
+            'a ``project_dir``. Otherwise set ``save_every_n_iters=0`` and '
+            '``save_progress_figs=False``')
+        if name is None: 
+            name = str(datetime.now().strftime('%Y_%m_%d-%H_%M_%S'))
+        savedir = os.path.join(project_dir,name)
+        if not os.path.exists(savedir): os.makedirs(savedir)
+        print(fill(f'Outputs will be saved to {savedir}'))
+
     
-    if history is None:
-        history_variables += ['iteration', 'median_duration']
-        history = {k:[] for k in history_variables}
-    else: history = {k:list(v) for k,v in history.items()}
-    
-    for iteration in tqdm.trange(start_iter, num_iters):
+    if history is None: history = {}
+
+    for iteration in tqdm.trange(start_iter, num_iters+1):
         if history_every_n_iters>0 and (iteration%history_every_n_iters)==0:
-            history = update_history(history, iteration, **model, **data)
+            history = update_history(history, iteration, model, 
+                                     include_states=states_in_history)
             
         if plot_every_n_iters>0 and (iteration%plot_every_n_iters)==0:
-            plot_progress(history=history, iteration=iteration, **data, **model)
+            plot_progress(model, data, history, iteration, name=name, 
+                          savefig=save_progress_figs, project_dir=project_dir)
 
         if save_every_n_iters>0 and (iteration%save_every_n_iters)==0:
-            if verbose: print(fill(f'Saving model to {save_path}'))
-            save_model(model, data, history, batch_info, iteration, 
-                       save_path, save_history=save_history, 
-                       save_states=save_states, save_data=save_data)
+            save_checkpoint(model, data, history, batch_info, iteration, name=name,
+                            project_dir=project_dir,save_history=save_history, 
+                            save_states=save_states, save_data=save_data)
             
         try: model = resample_model(data, **model, ar_only=ar_only)
         except KeyboardInterrupt: break
     
-    return model, {k:np.array(v) for k,v in history.items()}
+    return model, history, name
     
     
-def resume_fitting(model, *, batch_info, iteration, history, 
-                   name, Y, conf, mask, project_directory, 
-                   ar_only=False, **kwargs):
+def resume_fitting(*, params, hypparams, batch_info, iteration, mask,
+                   conf, Y, seed, noise_prior=None, states=None, **kwargs):
     
-    data = to_jax({'Y':Y, 'conf':conf, 'mask':mask})
-   
-    if 'ARHMM' in name and not ar_only:
-        new_name = name.replace('ARHMM','KPSLDS')
-        print(fill(f'Switching model name from {name} to {new_name}'))
-        name = new_name
+    model = initialize_model(
+        states=states, params=params, hypparams=hypparams,
+        noise_prior=noise_prior, seed=seed, Y=Y, mask=mask,
+        conf=conf, **kwargs)
     
-    return fit_model(
-        model, data, batch_info, ar_only=ar_only, 
-        project_directory=project_directory, save_name=name, 
-        history=history, start_iter=iteration+1, **kwargs)
+    data = jax.device_put({'Y':Y, 'conf':conf, 'mask':mask})
+    
+    return fit_model(model, data, batch_info, start_iter=iteration+1, **kwargs)
 
+
+def apply_model(*, params, coordinates, confidences=None,
+                num_iters=5, use_saved_states=True, states=None, 
+                mask=None, batch_info=None, ar_only=False, 
+                random_seed=0, batch_length=None, save_results=True,
+                project_dir=None, name=None, results_path=None, 
+                Y=None, conf=None, noise_prior=None, **kwargs):   
+    
+    
+    data,new_batch_info = format_data(
+        coordinates, confidences=confidences, batch_length=None, **kwargs)
+    session_names = [key for key,start,end in new_batch_info]
+
+    if save_results:
+        if results_path is None: 
+            assert project_dir is not None and name is not None, fill(
+                'The ``save_results`` option requires either a ``results_path`` '
+                'or the ``project_dir`` and ``name`` arguments')
+            results_path = os.path.join(project_dir,name,'results.h5')
+     
+    if use_saved_states:
+        assert not (states is None or mask is None or batch_info is None), fill(
+            'The ``use_saved_states`` option requires the additional '
+            'arguments ``states``, ``mask`` and ``batch_info``')   
+        
+        new_states,new_masks = {},{}
+        for k,v in jax.device_get(states).items():
+            new_states[k],new_masks[k],_ = batch(
+                unbatch(v, mask, batch_info), 
+                keys=session_names)
+        states,mask = new_states,new_masks['x']
+    
+    model = initialize_model(
+        states=states, params=params, 
+        **jax.device_put(data), **kwargs)
+    
+    if num_iters>0:
+        for iteration in tqdm.trange(num_iters, desc='Applying model'):
+            model = resample_model(data, **model, ar_only=ar_only, states_only=True)
+        
+    nlags = model['hypparams']['ar_hypparams']['nlags']
+    states = jax.device_get(model['states'])                     
+    estimated_coords = jax.device_get(estimate_coordinates(
+        **model['states'], **model['params'], **data))
+    
+    usage = get_usages(states['z'], np.array(mask))
+    reindex = np.argsort(np.argsort(usage)[::-1])
+    z_reindexed = reindex[states['z']]
+    
+    results_dict = {
+        session_name : {
+            'syllables' : np.pad(states['z'][i], (nlags,0), mode='edge')[m>0],
+            'syllables_reindexed' : np.pad(z_reindexed[i], (nlags,0), mode='edge')[m>0],
+            'estimated_coordinates' : estimated_coords[i][m>0],
+            'latent_state' : states['x'][i][m>0],
+            'centroid' : states['v'][i][m>0],
+            'heading' : states['h'][i][m>0],
+        } for i,(m,session_name) in enumerate(zip(mask,session_names))}
+    
+    if save_results: 
+        save_hdf5(results_path, results_dict)
+        print(fill(f'Saved results to {results_path}'))
+        
+    return results_dict
+
+
+def revert(checkpoint, iteration):
+    
+    assert len(checkpoint['history'])>0, fill(
+        'No history was saved during fitting')
+    
+    use_iter = max([i for i in checkpoint['history'] if i <= iteration])
+    print(f'Reverting to iteration {use_iter}')
+    
+    model_snapshot =  checkpoint['history'][use_iter]
+    checkpoint['params'] = model_snapshot['params']
+    checkpoint['seed'] = model_snapshot['seed']
+    checkpoint['iteration'] = use_iter
+    
+    if 'states' in model_snapshot: 
+        checkpoint['states'] = model_snapshot['states']
+    else: checkpoint['states'] = None
+        
+    for i in list(checkpoint['history'].keys()):
+        if i > use_iter: del checkpoint['history'][i]
+
+    return checkpoint
+    
+    

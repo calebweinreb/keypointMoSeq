@@ -31,14 +31,14 @@ def sample_ms(counts, betas, alpha, kappa):
                 dtype=np.int32)
     return jnp.array(newms)
 
-def sample_hdp_transitions(key, counts, betas, alpha, kappa, gamma):
-    keys,N = jr.split(key,3),counts.shape[0]
+def sample_hdp_transitions(seed, counts, betas, alpha, kappa, gamma):
+    seeds,N = jr.split(seed,3),counts.shape[0]
     ms = sample_ms(counts, betas, alpha, kappa)
-    betas = jr.dirichlet(keys[1], ms.sum(0)+gamma/N)
+    betas = jr.dirichlet(seeds[1], ms.sum(0)+gamma/N)
     conc = alpha*betas[None,:] + counts + kappa*jnp.identity(N)
-    return betas, jr.dirichlet(keys[2], conc)
+    return betas, jr.dirichlet(seeds[2], conc)
 
-def sample_transitions(key, counts, alpha, kappa):
+def sample_transitions(seed, counts, alpha, kappa):
     conc = counts + alpha + kappa*jnp.identity(counts.shape[0])
-    return jr.dirichlet(key, conc)
+    return jr.dirichlet(seed, conc)
     

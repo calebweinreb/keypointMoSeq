@@ -9,14 +9,18 @@ import jax, jax.numpy as jnp, jax.random as jr
 from jax.tree_util import tree_map
 from itertools import groupby
 from functools import partial
+from scipy.ndimage import median_filter
 from sklearn.decomposition import PCA
 from jaxlib.xla_extension import DeviceArray as jax_array
 na = jnp.newaxis
 
-def to_jax(data): return tree_map(lambda x: jnp.array(x) if isinstance(x,np.ndarray) else x, data)
-def to_np(data): return tree_map(lambda x: np.array(x) if isinstance(x,jax_array) else x, data)
-def jax_io(fn): return lambda *args, **kwargs: to_jax(fn(*to_np(args), **to_np(kwargs)))
-def np_io(fn): return lambda *args, **kwargs: to_np(fn(*to_jax(args), **to_jax(kwargs)))
+def jax_io(fn): 
+    return lambda *args, **kwargs: jax.device_put(
+        fn(*jax.device_get(args), **jax.device_get(kwargs)))
+
+def np_io(fn): 
+    return lambda *args, **kwargs: jax.device_get(
+        fn(*jax.device_put(args), **jax.device_put(kwargs)))
 
 @njit
 def count_transitions(num_states, mask, stateseqs):
@@ -27,12 +31,15 @@ def count_transitions(num_states, mask, stateseqs):
     counts = np.zeros((num_states,num_states))
     for i in prange(mask.shape[0]):
         for j in prange(mask.shape[1]-1):
-            if mask[i,j]>0 and mask[i,j+1]>0:
-                counts[stateseqs[i,j],stateseqs[i,j+1]] += 1
+            if not (   
+               mask[i,j]==0 or mask[i,j+1]==0 
+               or np.isnan(stateseqs[i,j]) 
+               or np.isnan(stateseqs[i,j+1])
+            ): counts[stateseqs[i,j],stateseqs[i,j+1]] += 1
     return counts
 
     
-def expected_keypoints(*, Y, v, h, x, Cd, **kwargs):
+def estimate_coordinates(*, Y, v, h, x, Cd, **kwargs):
     k,d = Y.shape[-2:]
     Gamma = center_embedding(k)
     Ybar = Gamma @ (pad_affine(x)@Cd.T).reshape(*Y.shape[:-2],k-1,d)
@@ -327,33 +334,99 @@ def get_durations(z, mask):
     changepoints = np.insert(np.diff(stateseq_flat).nonzero()[0]+1,0,0)
     return changepoints[1:]-changepoints[:-1]
 
-def get_usages(z, mask):
-    stateseq_flat = z[mask[:,-z.shape[1]:]>0]
-    return np.bincount(stateseq_flat)
+def get_usages(syllables, mask=None):
+    if isinstance(syllables, dict):
+        stateseq_flat = np.hstack(list(syllables.values()))
+    elif mask is not None:
+        stateseq_flat = syllables[mask[:,-syllables.shape[1]:]>0]
+    else: stateseq_flat = syllables.flatten()
+    return np.bincount(stateseq_flat)/len(stateseq_flat)
 
-def find_matching_videos(keys, video_directory):
+def find_matching_videos(keys, video_dir, as_dict=False):
     video_to_path = {
-        name : os.path.join(video_directory,name+ext) 
-        for name,ext in map(os.path.splitext,os.listdir(video_directory)) 
+        name : os.path.join(video_dir,name+ext) 
+        for name,ext in map(os.path.splitext,os.listdir(video_dir)) 
         if ext in ['.mp4','.avi','.mov']}
     video_paths = []
-    for key in keys:
+    for key in sorted(keys):
         matches = [path for video,path in video_to_path.items() 
                    if os.path.basename(key).startswith(video)]
         assert len(matches)>0, fill(f'No matching videos found for {key}')
         assert len(matches)<2, fill(f'More than one video matches {key} ({matches})')
         video_paths.append(matches[0])
-    return video_paths
+    if as_dict: return dict(zip(sorted(keys),video_paths))
+    else: return video_paths
 
-def unwrap_stateseqs(z, mask, batch_info): 
-    nlags = mask.shape[1]-z.shape[1]
+def unbatch(batches, mask, batch_info): 
+    nlags = mask.shape[1]-batches.shape[1]
     keys = sorted(set([key for key,start,end in batch_info]))
     
-    stateseqs = {}
+    unbatched = {}
     for key in keys:
         length = np.max([e for k,s,e in batch_info if k==key])
-        seq = np.zeros(int(length))*np.nan
-        for (k,s,e),m,z_batch in zip(batch_info,mask,z):
-            if k==key: seq[s+nlags:e] = z_batch[m[nlags:]>0]
-        stateseqs[key] = seq 
-    return stateseqs
+        seq = np.zeros((int(length),*batches.shape[2:]), dtype=batches.dtype)
+        for (k,s,e),m,b in zip(batch_info,mask,batches):
+            if k==key: seq[s+nlags:e] = b[m[nlags:]>0]
+        unbatched[key] = seq[nlags:]
+    return unbatched
+
+
+def batch(data_dict, batch_length=None, keys=None, batch_overlap=30):
+    if keys is None: keys = sorted(data_dict.keys())
+    Ns = [len(data_dict[key]) for key in keys]
+    if batch_length is None: batch_length = np.max(Ns)
+        
+    batches,mask,batch_info = [],[],[]
+    for key,N in zip(keys,Ns):
+        for start in range(0,N,batch_length):
+            arr = data_dict[key]
+            end = min(start+batch_length+batch_overlap, N)
+            pad_length = batch_length+batch_overlap-(end-start)
+            padding = np.zeros((pad_length,*arr.shape[1:]), dtype=arr.dtype)
+            mask.append(np.hstack([np.ones(end-start),np.zeros(pad_length)]))
+            batches.append(np.concatenate([arr[start:end],padding],axis=0))
+            batch_info.append((key,start,end))
+
+    batches = np.stack(batches)
+    mask = np.stack(mask)
+    return batches,mask,batch_info
+    
+    
+def filter_angle(angles, size=9, axis=0):
+    kernel = np.where(np.arange(len(angles.shape))==axis, size, 1)
+    return np.arctan2(median_filter(np.sin(angles), kernel),
+                      median_filter(np.cos(angles), kernel))
+
+
+def get_syllable_instances(syllables, min_duration=3, pre=30, post=60):
+    
+    num_syllables = int(max(map(max,syllables.values()))+1)
+    syllable_instances = [[] for syllable in range(num_syllables)]
+    
+    for key,stateseq in syllables.items():
+        
+        transitions = np.nonzero(stateseq[1:] != stateseq[:-1])[0]+1
+        starts = np.insert(transitions,0,0)
+        ends = np.append(transitions,len(stateseq))
+        
+        for (s,e,syllable) in zip(starts,ends,stateseq[starts]):
+            if (e-s > min_duration and s>=pre and s<len(stateseq)-post): 
+                syllable_instances[syllable].append((key,s,e))
+                
+    return syllable_instances
+
+
+
+def sample_syllable_instances(instances, num_samples, 
+                              mode='random', coordinates=None):
+    
+    assert len(instances) >= num_samples
+    assert mode in ['random','canonical']
+    
+    if mode=='random':
+        ixs = np.random.choice(len(instances), num_samples, replace=False)
+        return [instances[i] for i in ixs]
+    
+    if mode=='canonical':
+        assert coordinates is not None, fill(
+            '``coordinates`` are required when ``mode=="canonical"')
