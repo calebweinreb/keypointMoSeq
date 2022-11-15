@@ -13,12 +13,6 @@ from keypoint_moseq.util import *
 from keypoint_moseq.project.io import load_results
 
 
-def get_edges(use_bodyparts, skeleton):
-    edges = []
-    for bp1,bp2 in skeleton:
-        if bp1 in use_bodyparts and bp2 in use_bodyparts:
-            edges.append([use_bodyparts.index(bp1),use_bodyparts.index(bp2)])
-    return edges
 
 def plot_scree(pca, savefig=True, project_dir=None):
     fig = plt.figure()
@@ -201,7 +195,7 @@ def generate_crowd_movies(
     pre=30, post=60, min_usage=0.005, min_duration=3, dot_radius=4, 
     dot_color=(255,255,255), window_size=112, plot_keypoints=False, 
     use_reindexed=True, sampling_options={}, coordinates=None, 
-    quality=7, **kwargs):
+    bodyparts=None, use_bodyparts=None, quality=7, **kwargs):
     
     assert video_dir is not None, fill(
         'The ``video_dir`` argument is required')
@@ -228,28 +222,183 @@ def generate_crowd_movies(
     
     syllable_key = 'syllables' + ('_reindexed' if use_reindexed else '')
     syllables = {k:v[syllable_key] for k,v in results.items()}
-    centroids = {k:median_filter(v['centroid'],(filter_size,1)) for k,v in results.items()}
-    headings = {k:filter_angle(v['heading'], size=filter_size) for k,v in results.items()} 
+    centroids = {k:v['centroids'] for k,v in results.items()}
+    headings = {k:v['headings'] for k,v in results.items()}
+    
+    centroids,headings = filter_centroids_headings(
+        centroids, headings, filter_size=filter_size)
     
     syllable_instances = get_syllable_instances(
         syllables, pre=pre, post=post, min_duration=min_duration)
     
-    use_syllables = np.all([
-        np.array(list(map(len,syllable_instances)))>=rows*cols, 
-        get_usages(syllables)>=min_usage
-    ], axis=0).nonzero()[0]
+    sampled_instances = sample_instances(
+        syllable_instances, rows*cols, coordinates=coordinates, 
+        bodyparts=bodyparts, use_bodyparts=use_bodyparts,
+        **sampling_options)
     
-    for syllable in tqdm.tqdm(use_syllables, desc='Generating crowd movies'):
-        
-        instances = sample_syllable_instances(
-            syllable_instances[syllable], rows*cols,
-            coordinates=coordinates, **sampling_options)
+    for syllable,instances in tqdm.tqdm(
+        sampled_instances.items(), desc='Generating crowd movies'):
         
         frames = crowd_movie(
-            instances, rows, cols, videos, centroids, headings,
-            dot_color=dot_color, window_size=window_size,
-            pre=pre, post=post, dot_radius=dot_radius)
+            instances, rows, cols, videos, centroids, headings, 
+            window_size=window_size, dot_color=dot_color, 
+            dot_radius=dot_radius, pre=pre, post=post)
 
         path = os.path.join(output_dir, f'syllable{syllable}.mp4')
         write_video_clip(frames, path, fps=fps, quality=quality)
 
+        
+        
+
+def pad_limits(limits, left=0.1, right=0.1, top=0.1, bottom=0.1):
+    
+    xmin,ymin = limits[0]
+    xmax,ymax = limits[1]
+    width = xmax-xmin
+    height = ymax-ymin
+    
+    xmin -= width*left
+    xmax += width*right
+    ymin -= height*bottom
+    ymax += height*top
+    
+    return np.array([
+        [xmin,ymin],
+        [xmax,ymax]])
+
+
+        
+def plot_trajectories(titles, Xs, edges, lims, n_cols=4, invert=False, 
+                      cmap='autumn', node_size=50, linewidth=3, 
+                      fig_width=4, overlap=(0.2,0)):
+    
+    num_timesteps = Xs[0].shape[0]
+    num_keypoints = Xs[0].shape[1]
+
+    interval = int(np.floor(num_timesteps/10))
+    plot_frames = np.arange(0,num_timesteps,interval)
+    colors = plt.cm.get_cmap(cmap)(np.linspace(0,1,num_keypoints))
+    fill_color = 'k' if invert else 'w'
+
+    n_cols = min(n_cols, len(Xs))
+    n_rows = np.ceil(len(Xs)/n_cols)
+    offsets = np.stack(np.meshgrid(
+        np.arange(n_cols)*np.diff(lims[:,0])*(1-overlap[0]),
+        np.arange(n_rows)*np.diff(lims[:,1])*(overlap[1]-1)
+    ),axis=-1).reshape(-1,2)[:len(Xs)]
+    
+    Xs = np.array(Xs)+offsets[:,None,None]
+    xmin,ymin = lims[0] + offsets.min(0)
+    xmax,ymax = lims[1] + offsets.max(0)
+
+    
+    fig,ax = plt.subplots()
+
+    ax.fill_between(
+        [xmin,xmax], y1=[ymax,ymax], y2=[ymin,ymin], 
+        facecolor=fill_color, zorder=0, clip_on=False)
+        
+    for i in plot_frames:
+        
+        for X,offset in zip(Xs,offsets):
+            for ii,jj in edges: 
+                ax.plot(*X[i,(ii,jj)].T, c='k', zorder=i*4, 
+                        linewidth=linewidth, clip_on=False)
+        
+            for ii,jj in edges: 
+                ax.plot(*X[i,(ii,jj)].T, c=colors[ii], zorder=i*4+1, 
+                        linewidth=linewidth*.9, clip_on=False)
+
+            ax.scatter(*X[i].T, c=colors, zorder=i*4+2, edgecolor='k', 
+                       linewidth=0.4, s=node_size, clip_on=False)
+        
+        if i < plot_frames.max(): 
+            ax.fill_between(
+                [xmin,xmax], y1=[ymax,ymax], y2=[ymin,ymin], 
+                facecolor=fill_color, alpha=0.2, zorder=i*4+3, clip_on=False)
+
+            
+    title_xy = (lims * np.array([[0.5,0.1],[0.5,0.9]])).sum(0)
+    title_color = 'w' if invert else 'k'
+
+    for xy,text in zip(offsets+title_xy,titles):
+        ax.text(*xy, text, c=title_color, ha='center', 
+                va='top', zorder=plot_frames.max()*4+4)
+        
+    aspect = (ymax-ymin)/(xmax-xmin)
+    fig.set_size_inches((fig_width*n_cols, fig_width*aspect*n_cols*1.1))
+    ax.set_xlim(xmin,xmax)
+    ax.set_ylim(ymin,ymax)
+    ax.set_aspect('equal')
+    ax.axis('off')
+    return fig,ax
+    
+    
+
+
+def generate_trajectory_plots(
+    coordinates, results=None, output_dir=None, name=None, 
+    project_dir=None, results_path=None, pre=5, post=15, 
+    min_usage=0.005, min_duration=3, use_reindexed=True, 
+    skeleton=None, bodyparts=None, use_bodyparts=None,  
+    n_neighbors=40, keypoint_colormap='autumn', fig_size=4,
+    grid_cols=5, grid_margin=(-.2,-.2), plot_options={}, 
+    sampling_options={}, **kwargs):
+
+    if output_dir is None:
+        assert project_dir is not None and name is not None, fill(
+            'Either specify the ``output_dir`` where trajectory plots '
+            'should be saved or include a ``project_dir`` and ``name``')
+        output_dir = os.path.join(project_dir,name, 'trajectory_plots')
+    if not os.path.exists(output_dir): os.makedirs(output_dir)
+    print(f'Saving trajectory plots to {output_dir}')
+    
+    if not (bodyparts is None or use_bodyparts is None):
+        coordinates = reindex_by_bodyparts(coordinates, bodyparts, use_bodyparts)
+    
+    if results is None: results = load_results(
+        name=name, project_dir=project_dir, path=results_path)
+
+    syllable_key = 'syllables' + ('_reindexed' if use_reindexed else '')
+    syllables = {k:v[syllable_key] for k,v in results.items()}
+    centroids = {k:v['centroid'] for k,v in results.items()}
+    headings = {k:v['heading'] for k,v in results.items()}
+    plot_options = {**plot_options, 'cmap':keypoint_colormap}
+        
+    syllable_instances = get_syllable_instances(
+        syllables, pre=pre, post=post, min_duration=min_duration,
+        min_usage=min_usage, min_instances=n_neighbors)
+    
+    trajectories = sample_instances(
+        syllable_instances, n_neighbors, coordinates=coordinates, 
+        centroids=centroids, headings=headings, bodyparts=bodyparts, 
+        use_bodyparts=use_bodyparts, n_neighbors=n_neighbors, 
+        return_trajectories=True, **sampling_options)[1]
+
+    if skeleton is None: edges = []
+    else: edges = get_edges(use_bodyparts, skeleton)
+
+    syllables = sorted(trajectories.keys())
+    titles = [f'Syllable {syllable}' for syllable in syllables]
+    Xs = np.array([trajectories[syllable] for syllable in syllables]).mean(1)
+    
+    lims = np.stack([Xs.min((0,1,2)),Xs.max((0,1,2))])
+    lims = pad_limits(lims, left=0.1, right=0.1, top=0.2, bottom=0.2)
+
+        
+    if Xs.shape[-1]==2:
+        
+        # individual plots
+        for title,X in zip(titles,Xs):
+            fig,ax = plot_trajectories([title], X[None], edges, lims, **plot_options)
+            path = os.path.join(output_dir, f'{title}.pdf')
+            plt.savefig(path)
+            plt.close(fig=fig)
+
+        # grid plot
+        fig,ax = plot_trajectories(titles, Xs, edges, lims, **plot_options)
+        path = os.path.join(output_dir, 'all_trajectories.pdf')
+        plt.savefig(path)
+        plt.show()
+            
+    else: raise NotImplementedError()

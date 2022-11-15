@@ -290,21 +290,22 @@ def format_data(coordinates, *, confidences=None, keys=None,
     """    
     
     if keys is None: keys = sorted(coordinates.keys()) 
-    keypoint_ix = np.array([bodyparts.index(bp) for bp in use_bodyparts])
+    coordinates = reindex_by_bodyparts(coordinates, bodyparts, use_bodyparts)
+    confidences = reindex_by_bodyparts(confidences, bodyparts, use_bodyparts)
     
     Y,mask,batch_info = batch(coordinates, batch_length=batch_length, keys=keys)
-    conf = None if confidences is None else batch(
-        confidences, batch_length=batch_length, keys=keys)[0]
     
-    assert Y.shape[-2]==len(bodyparts), fill(
-        f'`The legth of `bodyparts`` ({len(bodyparts)}) must match' 
-        f' the number of keypoints in ``coordinates[{key}]`` ({K})')
-    
-    Y = Y[...,keypoint_ix,:] 
-    if conf is not None: 
-        conf = conf[...,keypoint_ix]+conf_pseudocount    
-    if added_noise_level>0 : 
+    if confidences is not None:
+        conf = batch(confidences, batch_length=batch_length, keys=keys)[0]
+        if conf.min() < 0: 
+            conf = np.maximum(conf,0) 
+            warnings.warn(fill(
+                'Negative confidence values are not allowed and will be set to 0.'))
+        conf = conf + conf_pseudocount
+  
+    if added_noise_level>0: 
         Y += np.random.uniform(-added_noise_level,added_noise_level,Y.shape)
+        
     return jax.device_put({'mask':mask, 'Y':Y, 'conf':conf}), batch_info
 
 

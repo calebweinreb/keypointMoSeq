@@ -11,6 +11,7 @@ from itertools import groupby
 from functools import partial
 from scipy.ndimage import median_filter
 from sklearn.decomposition import PCA
+from sklearn.neighbors import NearestNeighbors
 from jaxlib.xla_extension import DeviceArray as jax_array
 na = jnp.newaxis
 
@@ -397,36 +398,123 @@ def filter_angle(angles, size=9, axis=0):
     return np.arctan2(median_filter(np.sin(angles), kernel),
                       median_filter(np.cos(angles), kernel))
 
+def filter_centroids_headings(centroids, headings, filter_size=9):
+    centroids = {k:median_filter(v,(filter_size,1)) for k,v in centroids.items()}
+    headings = {k:filter_angle(v, size=filter_size) for k,v in headings.items()}  
+    return centroids, headings
 
-def get_syllable_instances(syllables, min_duration=3, pre=30, post=60):
+
+def get_syllable_instances(syllables, min_duration=3, pre=30, post=60,
+                           min_usage=0, min_instances=0):
     
     num_syllables = int(max(map(max,syllables.values()))+1)
     syllable_instances = [[] for syllable in range(num_syllables)]
     
     for key,stateseq in syllables.items():
-        
         transitions = np.nonzero(stateseq[1:] != stateseq[:-1])[0]+1
         starts = np.insert(transitions,0,0)
         ends = np.append(transitions,len(stateseq))
-        
         for (s,e,syllable) in zip(starts,ends,stateseq[starts]):
             if (e-s > min_duration and s>=pre and s<len(stateseq)-post): 
                 syllable_instances[syllable].append((key,s,e))
                 
-    return syllable_instances
+    usages_filter = get_usages(syllables) >= min_usage
+    counts_filter = np.array(list(map(len,syllable_instances))) >= min_instances
+    use_syllables = np.all([usages_filter, counts_filter],axis=0).nonzero()[0]
+    return {syllable : syllable_instances[syllable] for syllable in use_syllables} 
 
-
-
-def sample_syllable_instances(instances, num_samples, 
-                              mode='random', coordinates=None):
+def get_edges(use_bodyparts, skeleton):
+    edges = []
+    for bp1,bp2 in skeleton:
+        if bp1 in use_bodyparts and bp2 in use_bodyparts:
+            edges.append([use_bodyparts.index(bp1),use_bodyparts.index(bp2)])
+    return edges
+        
+def reindex_by_bodyparts(data, bodyparts, use_bodyparts, axis=1):
+    ix = np.array([bodyparts.index(bp) for bp in use_bodyparts])
+    if isinstance(data, np.ndarray): return np.take(data, ix, axis)
+    else: return {k: np.take(v, ix, axis) for k,v in data.items()}
     
-    assert len(instances) >= num_samples
-    assert mode in ['random','canonical']
+    
+    
+
+def get_trajectories(syllable_instances, coordinates, pre=5, post=15, 
+                     centroids=None, headings=None, filter_size=9):
+    
+    centroids,headings = filter_centroids_headings(
+        centroids, headings, filter_size=filter_size)
+        
+    trajectories = {}
+    for syllable,instances in syllable_instances.items():
+        X = np.array([coordinates[key][s-pre:s+post] for key,s,e in instances])
+        c = np.array([centroids[key][s] for key,s,e in instances])[:,None]
+        h = np.array([headings[key][s] for key,s,e in instances])[:,None]
+        trajectories[syllable] = np_io(inverse_affine_transform)(X,c,h)
+   
+    return trajectories
+
+
+
+
+
+def sample_instances(syllable_instances, num_samples, pre=5, post=15,
+                     mode='random', bodyparts=None, use_bodyparts=None,
+                     centroids=None, headings=None, coordinates=None, 
+                     pca_samples=50000, pca_dim=4, n_neighbors=50,
+                     filter_size=9, return_trajectories=False):
+    
+    assert mode in ['random','density']
+    assert all([len(v)>=num_samples for v in syllable_instances.values()])
+    assert n_neighbors>=num_samples
+    
+    if return_trajectories or mode=='density': 
+        assert not (coordinates is None or headings is None or centroids is None), fill(
+            '``coordinates``, ``headings`` and ``centroids`` are required when '
+            '``mode == "density"`` or ``return_trajectories==True``')
     
     if mode=='random':
-        ixs = np.random.choice(len(instances), num_samples, replace=False)
-        return [instances[i] for i in ixs]
+        sampled_instances = {syllable: [instances[i] for i in np.random.choice(
+            len(instances), num_samples, replace=False
+        )] for syllable,instances in syllable_instances.items()}
+        
+        if return_trajectories: 
+            sampled_trajectories = get_trajectories(
+                sampled_instances, coordinates, pre=pre, post=post, 
+                centroids=centroids, headings=headings, 
+                filter_size=filter_size)
+            return sampled_instances, sampled_trajectories
+        else: return sampled_instances
     
-    if mode=='canonical':
-        assert coordinates is not None, fill(
-            '``coordinates`` are required when ``mode=="canonical"')
+    
+    else:
+        trajectories = get_trajectories(
+            syllable_instances, coordinates, pre=pre, post=post, 
+            centroids=centroids, headings=headings, 
+            filter_size=filter_size)
+            
+        X = np.vstack(list(trajectories.values()))
+        if n>pca_samples: X = X[np.random.choice(n, pca_samples, replace=False)]
+        pca = PCA(n_components=pca_dim).fit(X.reshape(X.shape[0],-1))
+        Xpca = pca.transform(flatten(X))
+        all_nbrs = NearestNeighbors(n_neighbors=n_neighbors).fit(Xpca)
+        
+        sampled_instances = {}
+        sampled_trajectories = {}
+        
+        for syllable,X in trajectories.items():
+            
+            Xpca = pca.transform(X.reshape(X.shape[0],-1))
+            nbrs = NearestNeighbors(n_neighbors=n_neighbors).fit(Xpca)
+            distances, indices = nbrs.kneighbors(Xpca)
+            local_density = 1/distances.mean(1)
+            
+            distances, _ = all_nbrs.kneighbors(Xpca)
+            global_density = 1/distances.mean(1)
+            exemplar = np.argmax(local_density/global_density)  
+            samples = np.random.choice(indices[exemplar], num_samples, replace=False)
+            
+            sampled_instances[syllable] = [syllable_instances[syllable][i] for i in samples]
+            sampled_trajectories[syllable] = [syllable_trajectories[syllable][i] for i in samples]
+        
+        if not return_trajectories: return sampled_instances
+        else: return sampled_instances, sampled_trajectories
