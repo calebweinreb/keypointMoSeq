@@ -38,10 +38,9 @@ def load_sample_images(sample_keys, video_dir):
     keys = sorted(set([k[0] for k in sample_keys]))
     videos = find_matching_videos(keys,video_dir)
     key_to_video = dict(zip(keys,videos))
-    readers = {video: OpenCVReader(os.path.join(video_dir,video)) for video in videos}
+    readers = {key: OpenCVReader(video) for key,video in zip(keys,videos)}
     pbar = tqdm.tqdm(sample_keys, desc='Loading sample frames', position=0, leave=True)
-    return {(key,frame,bodypart):readers[key_to_video[key]][frame]
-            for key,frame,bodypart in pbar}
+    return {(key,frame,bodypart):readers[key][frame] for key,frame,bodypart in pbar}
 
 
 def load_annotations(project_dir):
@@ -61,7 +60,7 @@ def save_annotations(project_dir, annotations):
         output.append(f'{key},{frame},{bodypart},{x},{y}')
     path = os.path.join(project_dir,'error_annotations.csv')        
     open(path,'w').write('\n'.join(output))
-    print(fill('Annotations saved to {path}'))
+    print(fill(f'Annotations saved to {path}'))
     
 def save_params(project_dir, estimator):
     update_config(project_dir, 

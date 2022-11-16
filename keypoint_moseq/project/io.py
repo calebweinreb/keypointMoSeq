@@ -14,7 +14,7 @@ import pandas as pd
 from datetime import datetime
 from textwrap import fill
 from vidio.read import OpenCVReader
-from keypoint_moseq.util import batch
+from keypoint_moseq.util import batch, reindex_by_bodyparts
 
 def build_yaml(sections, comments):
     text_blocks = []
