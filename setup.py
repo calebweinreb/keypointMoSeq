@@ -20,6 +20,8 @@ setuptools.setup(
         'tfp-nightly[jax]',
         'numba',
         'numpy',
+        'seaborn',
+        'cytoolz',
         'matplotlib',
         'scikit-learn',
         'scipy',
