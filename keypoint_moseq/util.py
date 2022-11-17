@@ -64,6 +64,7 @@ def interpolate(keypoints, outliers, axis=1):
 
 
 def center_embedding(k):
+    # using numpy.linalg.svd because jax version crashes on windows
     return jnp.array(np.linalg.svd(np.eye(k) - np.ones((k,k))/k)[0][:,:-1])
 
 def stateseq_stats(stateseqs, mask):
