@@ -79,7 +79,8 @@ def initialize_states(seed, pca, Y, mask, conf, conf_threshold,
 
     
 def initialize_params(seed, pca, Y, mask, conf, conf_threshold, *,
-                      ar_hypparams, trans_hypparams, **kwargs):
+                      ar_hypparams, trans_hypparams, verbose=False, 
+                      **kwargs):
     
     if verbose: print('Initializing parameters')
     
@@ -95,7 +96,8 @@ def initialize_params(seed, pca, Y, mask, conf, conf_threshold, *,
 
 def initialize_hyperparams(*, conf, error_estimator, latent_dimension, 
                            trans_hypparams, ar_hypparams, obs_hypparams, 
-                           cen_hypparams, use_bodyparts, **kwargs):
+                           cen_hypparams, use_bodyparts, verbose=False, 
+                           **kwargs):
     
     if verbose: print('Initializing hyper-parameters')
     
