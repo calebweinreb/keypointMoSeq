@@ -229,7 +229,8 @@ def generate_crowd_movies(
         centroids, headings, filter_size=filter_size)
     
     syllable_instances = get_syllable_instances(
-        syllables, pre=pre, post=post, min_duration=min_duration)
+        syllables, pre=pre, post=post, min_duration=min_duration,
+        min_usage=min_usage, min_instances=rows*cols)
     
     sampled_instances = sample_instances(
         syllable_instances, rows*cols, coordinates=coordinates, 
