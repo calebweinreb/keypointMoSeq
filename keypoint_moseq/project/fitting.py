@@ -3,6 +3,8 @@ import os
 import numpy as np
 import tqdm
 import jax
+import warnings
+warnings.formatwarning = lambda msg, *a: str(msg)
 from textwrap import fill
 from datetime import datetime
 from keypoint_moseq.model.gibbs import resample_model
@@ -118,12 +120,13 @@ def apply_model(*, params, coordinates, confidences=None,
             'The ``use_saved_states`` option requires the additional '
             'arguments ``states``, ``mask`` and ``batch_info``')   
         
-        new_states,new_masks = {},{}
+        new_states = {}
         for k,v in jax.device_get(states).items():
             new_states[k],new_masks[k],_ = batch(
                 unbatch(v, mask, batch_info), 
                 keys=session_names)
-        states,mask = new_states,new_masks['x']
+        states = new_states
+    else: states = None
     
     model = initialize_model(
         states=states, params=params, 
@@ -138,7 +141,8 @@ def apply_model(*, params, coordinates, confidences=None,
     estimated_coords = jax.device_get(estimate_coordinates(
         **model['states'], **model['params'], **data))
     
-    usage = get_usages(states['z'], np.array(mask))
+    mask = np.array(data['mask'])
+    usage = get_usages(states['z'], mask)
     reindex = np.argsort(np.argsort(usage)[::-1])
     z_reindexed = reindex[states['z']]
     
@@ -182,3 +186,33 @@ def revert(checkpoint, iteration):
     return checkpoint
     
     
+def update_hypparams(model_dict, **kwargs):
+    
+    assert 'hypparams' in model_dict, fill(
+        'The inputted model/checkpoint does not contain any hyperparams')
+    
+    not_updated = list(kwargs.keys())
+    
+    for hypparms_group in model_dict['hypparams']:
+        for k,v in kwargs.items():
+            
+            if k in model_dict['hypparams'][hypparms_group]:
+                
+                old_value = model_dict['hypparams'][hypparms_group][k]
+                
+                if not np.isscalar(old_value): print(fill(
+                    f'{k} cannot be updated since it is not a scalar hyperparam'))
+                 
+                else:
+                    if not isinstance(v, type(old_value)): warnings.warn(fill(
+                        f'{v} has type {type(v)} which differs from the current '
+                        f'value of {k} which has type {type(old_value)}. {v} will '
+                        f'will be cast to {type(old_value)}'))
+                                     
+                    model_dict['hypparams'][hypparms_group][k] = type(old_value)(v)
+                    not_updated.remove(k)
+                    
+    if len(not_updated)>0: warnings.warn(fill(
+        f'The following hypparams were not found {not_updated}'))
+        
+    return model_dict
