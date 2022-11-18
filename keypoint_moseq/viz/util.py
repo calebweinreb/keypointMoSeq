@@ -84,13 +84,13 @@ def compute_stats_df(moseq_df, groupby = ['group', 'uuid', 'session_name'], fps 
     usages.columns = ['usage']
 
     # TODO: hard-coded heading for now, could add other scalars
-    features = moseq_df.groupby(['group', 'uuid', 'session_name'] + [syll_key])['heading'].agg(['mean', 'std', 'min', 'max'])
+    features = filtered_df.groupby(['group', 'uuid', 'session_name'] + [syll_key])['heading'].agg(['mean', 'std', 'min', 'max'])
     features.columns = ['_'.join(['heading', col]).strip() for col in features.columns.values]
 
     # get durations
-    trials = moseq_df['onset'].cumsum()
+    trials = filtered_df['onset'].cumsum()
     trials.name = 'trials'
-    durations = moseq_df.groupby(groupby + [syll_key] + [trials])['onset'].count()
+    durations = filtered_df.groupby(groupby + [syll_key] + [trials])['onset'].count()
     # average duration in seconds
     durations = durations.groupby(groupby + [syll_key]).mean() / fps
     durations.name = 'duration'
