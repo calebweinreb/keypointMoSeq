@@ -2,6 +2,7 @@ from jax.tree_util import tree_map
 import jax.numpy as jnp
 import jax
 import numpy as np
+import warnings
 import h5py
 import joblib
 import tqdm
@@ -14,7 +15,8 @@ import pandas as pd
 from datetime import datetime
 from textwrap import fill
 from vidio.read import OpenCVReader
-from keypoint_moseq.util import batch
+from keypoint_moseq.util import batch, reindex_by_bodyparts
+warnings.formatwarning = lambda msg, *a: str(msg)
 
 def build_yaml(sections, comments):
     text_blocks = []
@@ -439,7 +441,7 @@ def save_hdf5(filepath, save_dict):
         filepath: str, Path of the hdf5 file to create.
         tree: pytree, Recursive collection of tuples, lists, dicts, 
         numpy arrays to store. The root is assumed to be a dict. """
-    with h5py.File(filepath, 'w') as f:
+    with h5py.File(filepath, 'a') as f:
         for k,tree in save_dict.items():
             _savetree_hdf5(jax.device_get(tree), f, k)
 
@@ -452,6 +454,7 @@ def load_hdf5(filepath):
 
 def _savetree_hdf5(tree, group, name):
     """Recursively save a pytree to an h5 file group."""
+    if name in group: del group[name]
     if isinstance(tree, np.ndarray):
         group.create_dataset(name, data=tree)
     else:

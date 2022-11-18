@@ -55,16 +55,17 @@ def interpolate(keypoints, outliers, axis=1):
     outliers = np.repeat(outliers[...,None],init_shape[-1],axis=-1)
     keypoints = keypoints.reshape(init_shape[0],-1)
     outliers = outliers.reshape(init_shape[0],-1)
-    for i in range(keypoints.shape[1]):
-        keypoints[:,i] = np.interp(
-            np.arange(init_shape[0]), 
-            np.nonzero(~outliers[:,i])[0],
-            keypoints[:,i][~outliers[:,i]])
+    keypoints = np.stack([np.interp(
+        np.arange(init_shape[0]), 
+        np.nonzero(~outliers[:,i])[0],
+        keypoints[:,i][~outliers[:,i]]
+    ) for i in range(keypoints.shape[1])], axis=1)     
     return np.moveaxis(keypoints.reshape(init_shape),0,axis)
 
 
 def center_embedding(k):
-    return jnp.linalg.svd(jnp.eye(k) - jnp.ones((k,k))/k)[0][:,:-1]
+    # using numpy.linalg.svd because jax version crashes on windows
+    return jnp.array(np.linalg.svd(np.eye(k) - np.ones((k,k))/k)[0][:,:-1])
 
 def stateseq_stats(stateseqs, mask):
     s = np.array(stateseqs.flatten()[mask[...,-stateseqs.shape[-1]:].flatten()>0])

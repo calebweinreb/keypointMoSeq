@@ -222,14 +222,15 @@ def generate_crowd_movies(
     
     syllable_key = 'syllables' + ('_reindexed' if use_reindexed else '')
     syllables = {k:v[syllable_key] for k,v in results.items()}
-    centroids = {k:v['centroids'] for k,v in results.items()}
-    headings = {k:v['headings'] for k,v in results.items()}
+    centroids = {k:v['centroid'] for k,v in results.items()}
+    headings = {k:v['heading'] for k,v in results.items()}
     
     centroids,headings = filter_centroids_headings(
         centroids, headings, filter_size=filter_size)
     
     syllable_instances = get_syllable_instances(
-        syllables, pre=pre, post=post, min_duration=min_duration)
+        syllables, pre=pre, post=post, min_duration=min_duration,
+        min_usage=min_usage, min_instances=rows*cols)
     
     sampled_instances = sample_instances(
         syllable_instances, rows*cols, coordinates=coordinates, 

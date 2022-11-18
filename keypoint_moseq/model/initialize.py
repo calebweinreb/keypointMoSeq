@@ -1,5 +1,6 @@
 import jax, jax.numpy as jnp, jax.random as jr
 from jax.tree_util import tree_map
+import numpy as np
 from keypoint_moseq.util import transform_data_for_pca, align_egocentric, interpolate, jax_io
 from keypoint_moseq.model.transitions import sample_hdp_transitions, sample_transitions
 from keypoint_moseq.model.gibbs import resample_scales, resample_stateseqs
@@ -44,12 +45,16 @@ def initialize_obs_params(pca, *, Y, mask, latent_dimension, whiten, **kwargs):
 
 def initialize_latents(pca, *, Y, Cd, **kwargs):
     Y_flat = transform_data_for_pca(Y, **kwargs)
-    return (Y_flat - Cd[:,-1]) @ jnp.linalg.pinv(Cd[:,:-1]).T
+    # using numpy.linalg.pinv because jax version crashes on windows
+    return (Y_flat - Cd[:,-1]) @ jnp.array(np.linalg.pinv(Cd[:,:-1]).T)
 
 
 def initialize_states(seed, pca, Y, mask, conf, conf_threshold, 
-                      params, noise_prior, *, obs_hypparams, **kwargs):
+                      params, noise_prior, *, obs_hypparams, 
+                      verbose=False, **kwargs):
 
+    if verbose: print('Initializing states')
+    
     if conf is None: 
         Y_interp = Y
     else: 
@@ -74,7 +79,10 @@ def initialize_states(seed, pca, Y, mask, conf, conf_threshold,
 
     
 def initialize_params(seed, pca, Y, mask, conf, conf_threshold, *,
-                      ar_hypparams, trans_hypparams, **kwargs):
+                      ar_hypparams, trans_hypparams, verbose=False, 
+                      **kwargs):
+    
+    if verbose: print('Initializing parameters')
     
     if conf is None: Y_interp = Y
     else: Y_interp = interpolate(Y, conf<conf_threshold)
@@ -88,7 +96,10 @@ def initialize_params(seed, pca, Y, mask, conf, conf_threshold, *,
 
 def initialize_hyperparams(*, conf, error_estimator, latent_dimension, 
                            trans_hypparams, ar_hypparams, obs_hypparams, 
-                           cen_hypparams, use_bodyparts, **kwargs):
+                           cen_hypparams, use_bodyparts, verbose=False, 
+                           **kwargs):
+    
+    if verbose: print('Initializing hyper-parameters')
     
     trans_hypparams = trans_hypparams.copy()
     obs_hypparams = obs_hypparams.copy()
