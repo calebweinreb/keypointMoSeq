@@ -18,6 +18,7 @@ import seaborn as sns
 def compute_moseq_df(results_dict, config, smooth_heading= True):
     session_name = []
     centroid = []
+    velocity = []
     estimated_coordinates = []
     heading = []
     syllables = []
@@ -26,10 +27,10 @@ def compute_moseq_df(results_dict, config, smooth_heading= True):
     s_uuid = []
     for k, v in results_dict.items():
         centroid.append(v['centroid'])
+        velocity.append(np.concatenate(([0], np.sqrt(np.square(np.diff(v['centroid'], axis = 0)).sum(axis=1)) *30)))
         n_frame= v['centroid'].shape[0]
         session_name.append([str(k)] *n_frame)
         s_uuid.append([str(uuid.uuid4())]*n_frame)
-
         frame_index.append(np.arange(n_frame))
         estimated_coordinates.append(v['estimated_coordinates'])
         if smooth_heading:
@@ -51,6 +52,7 @@ def compute_moseq_df(results_dict, config, smooth_heading= True):
     moseq_df = pd.DataFrame(np.concatenate(centroid), columns=['centroid_x', 'centroid_y'])
     moseq_df = pd.concat([moseq_df, coor_df], axis = 1)
     moseq_df['heading'] = np.concatenate(heading)
+    moseq_df['velocity_px_s'] = np.concatenate(velocity)
     moseq_df['syllable'] = np.concatenate(syllables)
     moseq_df['syllables_reindexed'] = np.concatenate(syllables_reindexed)
     moseq_df['frame_index'] = np.concatenate(frame_index)
