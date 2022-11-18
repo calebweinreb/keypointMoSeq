@@ -70,12 +70,14 @@ def compute_moseq_df(results_dict, config, smooth_heading= True):
     onset = np.full(moseq_df.shape[0], False)
     onset[indices] = True
     moseq_df['onset'] = onset
-    moseq_df['group'] = 'default'
-
     return moseq_df
 
-def compute_stats_df(moseq_df, groupby = ['group', 'uuid', 'session_name'], fps = 30, syll_key = 'syllables_reindexed', normalize = True):
-    usages = (moseq_df.groupby(groupby)[syll_key]
+def compute_stats_df(moseq_df, threshold, groupby = ['group', 'uuid', 'session_name'], fps = 30, syll_key = 'syllables_reindexed', normalize = True):
+    raw_usage = (moseq_df.groupby('syllable').count()['frame_index']/moseq_df.shape[0]).reset_index().rename(columns={'frame_index':'counts'})
+    syll_include = raw_usage[raw_usage['counts'] > threshold]['syllable']
+    filtered_df = moseq_df[moseq_df['syllable'].isin(syll_include)].copy()
+
+    usages = (filtered_df.groupby(groupby)[syll_key]
                   .value_counts(normalize=normalize)
                   .unstack(fill_value=0)
                   .reset_index()
