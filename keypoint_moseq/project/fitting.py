@@ -122,9 +122,9 @@ def apply_model(*, params, coordinates, confidences=None,
         
         new_states = {}
         for k,v in jax.device_get(states).items():
-            new_states[k],new_masks[k],_ = batch(
+            new_states[k] = batch(
                 unbatch(v, mask, batch_info), 
-                keys=session_names)
+                keys=session_names)[0]
         states = new_states
     else: states = None
     
