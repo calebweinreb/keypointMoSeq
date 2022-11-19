@@ -86,8 +86,9 @@ def compute_stats_df(moseq_df, threshold, groupby = ['group', 'uuid', 'session_n
     usages.columns = ['usage']
 
     # TODO: hard-coded heading for now, could add other scalars
-    features = filtered_df.groupby(['group', 'uuid', 'session_name'] + [syll_key])['heading'].agg(['mean', 'std', 'min', 'max'])
-    features.columns = ['_'.join(['heading', col]).strip() for col in features.columns.values]
+    features = filtered_df.groupby(['group', 'uuid', 'session_name'] + [syll_key])[['heading', 'velocity_px_s']].agg(['mean', 'std', 'min', 'max'])
+    print(features.columns.values)
+    features.columns = ['_'.join(col).strip() for col in features.columns.values]
 
     # get durations
     trials = filtered_df['onset'].cumsum()
@@ -132,13 +133,6 @@ def create_fingerprint_dataframe(scalar_df, mean_df, stat_type='mean', n_bins=No
     # deep copy the dfs
     scalar_df = scalar_df.copy()
     mean_df = mean_df.copy()
-    # rescale velocity to cm/s
-    vel_cols = [c for c in scalars if 'velocity' in c]
-    vel_cols_stats = [f'{c}_{stat_type}' for c in scalars if 'velocity' in c]
-    
-    if len(vel_cols) > 0:
-        scalar_df[vel_cols] *= 30
-        mean_df[vel_cols_stats] *=30
     
     # pivot mean_df to be groupby x syllable
     syll_summary = mean_df.pivot_table(index=groupby_list, values='usage', columns='syllable')
@@ -281,7 +275,7 @@ def _apply_to_col(df, fn, **kwargs):
 
 
 def create_fingerprint_dataframe(scalar_df, mean_df, stat_type='mean', n_bins=None, groupby_list=['group', 'uuid'], range_type='robust',
-                                 scalars=['heading']):
+                                 scalars=['heading', 'velocity_px_s']):
     # deep copy the dfs
     scalar_df = scalar_df.copy()
     mean_df = mean_df.copy()
@@ -327,8 +321,8 @@ def create_fingerprint_dataframe(scalar_df, mean_df, stat_type='mean', n_bins=No
 
 
 def plotting_fingerprint(summary,range_dict, preprocessor=None, num_level = 1, level_names = ['Group'], vmin = None, vmax = None,
-                         plot_columns=['heading', 'MoSeq'],
-                         col_names=[('Heading','a.u.'), ('MoSeq','Syllable ID')]):
+                         plot_columns=['heading','velocity_px_s', 'MoSeq'],
+                         col_names=[('Heading','a.u.'),('velocity','px/s'), ('MoSeq','Syllable ID')]):
     # ensure number of groups is not over the number of available levels
     if num_level > len(summary.index.names):
         raise Exception('Too many levels to unpack. num_level should be less than', len(summary.index.names))
