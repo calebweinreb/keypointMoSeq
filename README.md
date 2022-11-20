@@ -28,13 +28,13 @@ pip install "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_
 pip install jax https://whls.blob.core.windows.net/unstable/cpu/jaxlib-0.3.22-cp39-cp39-win_amd64.whl
 
 # Windows users (GPU)
-pip install jax https://whls.blob.core.windows.net/unstable/cuda111/jaxlib-0.3.22+cuda11.cudnn82-cp39-none-win_amd64.whl
+pip install jax https://whls.blob.core.windows.net/unstable/cuda111/jaxlib-0.3.22+cuda11.cudnn82-cp39-cp39-win_amd64.whl
 ```
 
 4. Clone or download the this github repo and pip install:
 ```
 git clone https://github.com/calebweinreb/keypointMoSeq.git
-pip install keypoint_moseq
+pip install keypointMoSeq
 ```
 
 5. Make the new environment accessible in jupyter 
