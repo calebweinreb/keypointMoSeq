@@ -33,7 +33,7 @@ pip install jax https://whls.blob.core.windows.net/unstable/cuda111/jaxlib-0.3.2
 
 4. Clone or download the this github repo and pip install:
 ```
-git clone https://github.com/calebweinreb/keypointMoSeq.git
+git clone -b user_friendly_pipeline https://github.com/calebweinreb/keypointMoSeq.git
 pip install keypointMoSeq
 ```
 
