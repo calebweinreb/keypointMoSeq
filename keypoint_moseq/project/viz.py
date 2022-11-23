@@ -168,6 +168,31 @@ def crowd_movie(instances, rows, cols, videos, centroids, headings,
                 dot_color=(255,255,255), window_size=112, 
                 pre=30, post=60, dot_radius=4):
     
+    """Generate a crowd movie
+
+    Parameters
+    ----------
+    instances: list of tuples ``(key, start, end)``
+        List of syllable instances to include in the crowd movie,
+        where each instance is specified as a tuple with the video 
+        name, start frame and end frame. The list must have length
+        ``rows*cols``. The video names must also be keys in ``videos``.
+        
+    rows: int
+        Number of rows in the crowd movie grid
+        
+    cols: int
+        Number of columns in the crowd movie grid
+        
+    videos: dict
+        Dictionary mapping video names to video readers. Frames from
+        each reader should be accessible via __getitem__(int or slice).
+
+    Returns
+    -------
+
+    """
+
     tiles = np.stack([
         crowd_movie_tile(
             key, start, end, videos, centroids, headings, 
