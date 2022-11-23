@@ -34,7 +34,7 @@ pip install jax https://whls.blob.core.windows.net/unstable/cuda111/jaxlib-0.3.2
 4. Clone or download the this github repo and pip install:
 ```
 git clone -b user_friendly_pipeline https://github.com/calebweinreb/keypointMoSeq.git
-pip install keypointMoSeq
+pip install -e keypointMoSeq/
 ```
 
 5. Make the new environment accessible in jupyter 
