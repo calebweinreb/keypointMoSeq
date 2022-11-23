@@ -41,16 +41,16 @@ def compute_moseq_df(results_dict, *, use_bodyparts, smooth_heading=True, **kwar
         syllables_reindexed.append(v['syllables_reindexed'])
     
     # build data frame
-    coor_col = []
-    for part in use_bodyparts:
-        coor_col.append(part+'_x')
-        coor_col.append(part+'_y')
-    estimated_coordinates =np.concatenate(estimated_coordinates)
-    n, x, y = estimated_coordinates.shape
-    coor_df = pd.DataFrame(np.reshape(estimated_coordinates, (n, x*y)), columns=coor_col)
+    # coor_col = []
+    # for part in use_bodyparts:
+    #     coor_col.append(part+'_x')
+    #     coor_col.append(part+'_y')
+    # estimated_coordinates =np.concatenate(estimated_coordinates)
+    # n, x, y = estimated_coordinates.shape
+    # coor_df = pd.DataFrame(np.reshape(estimated_coordinates, (n, x*y)), columns=coor_col)
     
     moseq_df = pd.DataFrame(np.concatenate(centroid), columns=['centroid_x', 'centroid_y'])
-    moseq_df = pd.concat([moseq_df, coor_df], axis = 1)
+    # moseq_df = pd.concat([moseq_df, coor_df], axis = 1)
     moseq_df['heading'] = np.concatenate(heading)
     moseq_df['velocity_px_s'] = np.concatenate(velocity)
     moseq_df['syllable'] = np.concatenate(syllables)
