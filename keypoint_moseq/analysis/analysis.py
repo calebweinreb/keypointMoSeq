@@ -86,7 +86,7 @@ def compute_stats_df(moseq_df, threshold=0.005, groupby=['group','uuid'], fps=30
     usages.columns = ['usage']
 
     # TODO: hard-coded heading for now, could add other scalars
-    features = filtered_df.groupby(['group', 'uuid', 'session_name'] + [syll_key])[['heading', 'velocity_px_s']].agg(['mean', 'std', 'min', 'max'])
+    features = filtered_df.groupby(groupby + [syll_key])[['heading', 'velocity_px_s']].agg(['mean', 'std', 'min', 'max'])
 
     features.columns = ['_'.join(col).strip() for col in features.columns.values]
 
@@ -102,61 +102,6 @@ def compute_stats_df(moseq_df, threshold=0.005, groupby=['group','uuid'], fps=30
     stats_df = usages.join(durations).join(features).reset_index()
     stats_df = stats_df.rename(columns={'syllables_reindexed':'syllable'})
     return stats_df
-
-
-from operator import pos
-import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
-from collections import defaultdict
-from sklearn.preprocessing import LabelEncoder, MinMaxScaler, StandardScaler
-
-import pandas as pd
-import numpy as np
-from os.path import join
-from os import makedirs
-
-def _apply_to_col(df, fn, **kwargs):
-    return df.apply(fn, axis=0, **kwargs)
-
-
-def create_fingerprint_dataframe(scalar_df, mean_df, stat_type='mean', n_bins=None, groupby_list=['group', 'uuid'], range_type='robust',
-                                 scalars=['velocity_2d_mm', 'height_ave_mm', 'length_mm', 'dist_to_center_px']):
-    # deep copy the dfs
-    scalar_df = scalar_df.copy()
-    mean_df = mean_df.copy()
-    
-    # pivot mean_df to be groupby x syllable
-    syll_summary = mean_df.pivot_table(index=groupby_list, values='usage', columns='syllable')
-    syll_summary.columns = pd.MultiIndex.from_arrays([['MoSeq'] * syll_summary.shape[1], syll_summary.columns])
-    min_p = syll_summary.min().min()
-    max_p = syll_summary.max().max()
-    
-    ranges = scalar_df.reset_index(drop=True)[scalars].agg(['min', 'max', robust_min, robust_max])
-    # add syllable ranges to this df
-    ranges['MoSeq'] = [min_p, max_p, min_p, max_p]
-    range_idx = ['min', 'max'] if range_type == 'full' else ['robust_min', 'robust_max']
-
-    def bin_scalars(data: pd.Series, n_bins=50, range_type='full'):
-        _range = ranges.loc[range_idx, data.name]
-        bins = np.linspace(_range.iloc[0], _range.iloc[1], n_bins)
-
-        binned_data = data.value_counts(normalize=True, sort=False, bins=bins)
-        binned_data = binned_data.sort_index().reset_index(drop=True)
-        binned_data.index.name = 'bin'
-        return binned_data
-
-    # use total number of syllables 
-    if n_bins is None:
-        n_bins = syll_summary.shape[1] + 1 # num of bins (default to match the total number of syllables)
-
-    binned_scalars = scalar_df.groupby(groupby_list)[scalars].apply(_apply_to_col, fn=bin_scalars, range_type=range_type, n_bins=n_bins)
-
-    scalar_fingerprint = binned_scalars.pivot_table(index=groupby_list, columns='bin', values=binned_scalars.columns)
-
-    fingerprints = scalar_fingerprint.join(syll_summary, how='outer')
-
-    return fingerprints, ranges.loc[range_idx]
-
 
 
 ## fingerprint
@@ -220,7 +165,7 @@ def create_fingerprint_dataframe(scalar_df, mean_df, stat_type='mean', n_bins=10
 
 
 def plotting_fingerprint(summary,range_dict, preprocessor_type='minmax', num_level=1, level_names=['Group'], vmin=None, vmax=None,
-                         figsize=(10,9), plot_columns=['heading','velocity_px_s', 'MoSeq'],
+                         figsize=(10,15), plot_columns=['heading','velocity_px_s', 'MoSeq'],
                          col_names=[('Heading','a.u.'),('velocity','px/s'), ('MoSeq','Syllable ID')]):
     
     from sklearn.preprocessing import MinMaxScaler, StandardScaler
