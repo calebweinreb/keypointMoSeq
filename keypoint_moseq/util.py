@@ -50,12 +50,17 @@ def estimate_coordinates(*, Y, v, h, x, Cd, **kwargs):
 @jax_io
 def interpolate(keypoints, outliers, axis=1):
     keypoints = np.moveaxis(keypoints, axis, 0)
-    outliers = np.moveaxis(outliers, axis, 0)
     init_shape = keypoints.shape
-    outliers = np.repeat(outliers[...,None],init_shape[-1],axis=-1)
     keypoints = keypoints.reshape(init_shape[0],-1)
+    
+    outliers = np.moveaxis(outliers, axis, 0)
+    outliers = np.repeat(outliers[...,None],init_shape[-1],axis=-1)
     outliers = outliers.reshape(init_shape[0],-1)
-    keypoints = np.stack([np.interp(
+    
+    interp = lambda x,xp,fp: (
+        np.ones_like(x)*x.mean() if len(xp)==0 else np.interp(x,xp,fp))
+    
+    keypoints = np.stack([interp(
         np.arange(init_shape[0]), 
         np.nonzero(~outliers[:,i])[0],
         keypoints[:,i][~outliers[:,i]]
