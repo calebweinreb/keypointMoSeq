@@ -72,7 +72,7 @@ def compute_moseq_df(results_dict, *, use_bodyparts, smooth_heading=True, **kwar
     moseq_df['onset'] = onset
     return moseq_df
 
-def compute_stats_df(moseq_df, threshold=0.005, groupby=['group','uuid'], fps=30, syll_key='syllables_reindexed', normalize=True, **kwargs):
+def compute_stats_df(moseq_df, threshold=0.005, groupby=['group','uuid', 'session_name'], fps=30, syll_key='syllables_reindexed', normalize=True, **kwargs):
     raw_usage = (moseq_df.groupby('syllable').count()['frame_index']/moseq_df.shape[0]).reset_index().rename(columns={'frame_index':'counts'})
     syll_include = raw_usage[raw_usage['counts'] > threshold]['syllable']
     filtered_df = moseq_df[moseq_df['syllable'].isin(syll_include)].copy()
