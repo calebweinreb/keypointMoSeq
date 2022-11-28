@@ -399,7 +399,7 @@ def load_keypoints_from_deeplabcut_file(filepath, *, bodyparts, **kwargs):
     ext = os.path.splitext(filepath)[1]
     assert ext in ['.csv','.h5']
     if ext=='.h5': df = pd.read_hdf(filepath)
-    if ext=='.csv': df = pd.read_csv(filepath)
+    if ext=='.csv': df = pd.read_csv(filepath, header=[0,1,2], index_col=0)
         
     dlc_bodyparts = list(zip(*df.columns.to_list()))[1][::3]
     assert dlc_bodyparts==tuple(bodyparts), fill(
